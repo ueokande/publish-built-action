@@ -1,7 +1,8 @@
 # Publish built action
 
 Create a distribution commit containing prebuilt artifacts and push a new,
-annotated release tag. Keep generated JavaScript out of your development branch
+annotated release tag. Optionally copy a source GitHub Release body into a new
+distribution Release. Keep generated JavaScript out of your development branch
 while making an action consumable directly from a release tag.
 
 This is a composite action implemented with Bash and Git. Supported environments
@@ -18,7 +19,14 @@ files in that checkout. This action:
 2. Creates a tree from that commit plus only the specified artifact paths,
    force-adding ignored files.
 3. Creates a child distribution commit and an annotated tag with source provenance.
-4. Pushes only that tag to `origin` and returns outputs after success.
+4. Pushes only that tag to `origin`.
+5. If `source-release-tag` is set, creates a published GitHub Release for the new
+   tag with the source Release body and the distribution tag as its title.
+6. Returns outputs after all requested operations succeed.
+
+When Release creation is enabled, the source body is fetched before the tag push.
+A failed source read prevents publication. A failed Release creation leaves the
+already-pushed tag intact and fails the action; retry only Release creation.
 
 The source branch, `HEAD`, caller's index, local tags, and Git configuration stay
 unchanged. Unrelated staged, unstaged, and untracked files are excluded. Changes
@@ -35,8 +43,10 @@ provide server-side tag protection: configure GitHub tag rulesets to prevent
 other actors from updating or deleting release tags.
 
 This action does not decide versions, check out source, build, test, transfer
-artifacts, create GitHub Releases or release notes, publish npm packages, maintain
-a distribution branch, or update floating tags such as `v1`.
+artifacts, generate release notes, publish npm packages, maintain
+a distribution branch, or update floating tags such as `v1`. Optional Release
+creation copies only the body, not assets, title, draft status or prerelease status;
+it creates a normal published Release. It never edits an existing Release.
 
 ## Inputs and outputs
 
@@ -45,6 +55,9 @@ a distribution branch, or update floating tags such as `v1`.
 | `tag` | Yes | — | New tag name, for example `v1.2.3`. Must be a valid Git tag ref. |
 | `paths` | Yes | — | Newline-separated literal artifact paths relative to the source repository root. |
 | `working-directory` | No | `.` | Source repository root; useful for checkouts in a subdirectory. |
+| `source-release-tag` | No | Empty | Enable Release creation by copying this source Release's body. Must differ from `tag`. |
+| `release-repository` | No | `${{ github.repository }}` | Repository for both Releases, in `OWNER/REPO` form; must match the checkout's `origin`. |
+| `token` | No | `${{ github.token }}` | GitHub API token used only for optional Release operations; does not configure Git authentication. |
 
 Paths may name files or directories, including ignored paths and names containing
 spaces. Globs are not expanded: `dist/*` means a file literally named `*` within
@@ -61,6 +74,7 @@ Git attributes and clean filters apply when adding files, as with `git add`.
 | `tag` | Successfully published tag name. |
 | `commit` | Distribution commit SHA (the annotated tag's target). |
 | `source` | Source `HEAD` SHA (the distribution commit's parent). |
+| `release-url` | Created GitHub Release URL, or empty in tag-only mode. |
 
 Failed runs do not return success outputs. A lost connection can make a push's
 outcome uncertain; inspect the remote tag before attempting recovery. Objects
@@ -77,14 +91,21 @@ detached checkout works; `fetch-depth: 0` is unnecessary.
 
 If checkout uses `persist-credentials: false`, the caller must configure a supported
 Git credential mechanism before publication. Setting `GH_TOKEN` alone does not
-configure `git push`. This action accepts no token and does not change credentials.
+configure `git push`. The `token` input authenticates only the optional GitHub API calls and does not
+change Git credentials.
 For another repository, supply an appropriately scoped GitHub App token or PAT to
 checkout. Repository rulesets can still reject the push; configure the publishing
 identity's permissions accordingly. Never run a publishing job on untrusted code
 with write credentials.
 
+Release creation requires GitHub CLI (`gh`, preinstalled on GitHub-hosted Ubuntu)
+and a token with `contents: write` on `release-repository`. For a checkout of
+another repository, set both `release-repository` and `token` appropriately, in
+addition to checkout's Git credentials. Both source and distribution Releases are
+in that same repository. Tag-only mode does not call `gh` or require API access.
+
 Tag pushes authenticated by `GITHUB_TOKEN` generally do not trigger additional
-GitHub Actions workflows. Create the GitHub Release in the same workflow, or use
+GitHub Actions workflows. Use the optional Release feature in this action, or use
 an appropriately scoped GitHub App token if downstream workflow triggers are needed.
 
 ## Build and publish in one job
@@ -135,11 +156,6 @@ jobs:
         with:
           tag: ${{ inputs.tag }}
           paths: dist
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.publish.outputs.tag }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --generate-notes
 ```
 
 ## Separate build and publication jobs
@@ -233,9 +249,9 @@ Use that as `release-please-config.json` with an initialized
 Release-please creates `source-v1.2.3`; the distribution action creates `v1.2.3`
 using its `version` output. Do not let release-please create the distribution tag
 first. This example uses root-package outputs; monorepos need path-prefixed outputs.
-The distribution Release copies the source Release body rather than generating
-new notes. Fetch the body before publishing the tag so a failed read does not
-leave a distribution tag without its notes. Replace `master` with your development
+The action copies the source Release body rather than generating new notes. It
+fetches the body before publishing the tag so a failed read does not leave a
+distribution tag without its notes. Replace `master` with your development
 branch if necessary.
 
 ```yaml
@@ -285,40 +301,28 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - name: Copy source GitHub Release notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_TAG: ${{ needs.release.outputs.source_tag }}
-        run: gh release view "$SOURCE_TAG" --json body --jq '.body' > "$RUNNER_TEMP/release-notes.md"
       - uses: ueokande/publish-built-action@REVIEWED_COMMIT_SHA
         id: publish
         with:
           tag: v${{ needs.release.outputs.version }}
           paths: dist
-      - name: Create distribution GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.publish.outputs.tag }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          source-release-tag: ${{ needs.release.outputs.source_tag }}
 ```
 
 ## Recover a failed GitHub Release step
 
 If the tag push succeeds but GitHub Release creation fails, **do not rerun this
 action or the entire publishing job**. The existing tag will correctly cause an
-error. Verify the remote tag and retry only GitHub Release creation, for example
-from an authenticated checkout or a separate manually dispatched recovery job:
+error. Verify the remote tag and retry only GitHub Release creation from an
+authenticated checkout or a separate manually dispatched recovery job.
+
+Copy the source Release notes again and create only the distribution Release,
+using the actual repository, source tag and distribution tag. Authenticate `gh`
+with a token that has `contents: write`:
 
 ```bash
-gh release create v1.2.3 --verify-tag --generate-notes
-```
-
-For the release-please example, copy the source Release notes again and create
-only the distribution Release, using the actual source and distribution tags:
-
-```bash
-gh release view source-v1.2.3 --json body --jq '.body' > release-notes.md
-gh release create v1.2.3 --verify-tag --title v1.2.3 --notes-file release-notes.md
+gh release view source-v1.2.3 --repo OWNER/REPO --json body --jq '.body' > release-notes.md
+gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes-file release-notes.md
 ```
 
 Do not use `--generate-notes` for this recovery; preserve the source Release body.
@@ -335,7 +339,9 @@ bash -n scripts/publish.sh tests/integration.sh
 bash tests/integration.sh
 ```
 
-Tests use temporary local bare remotes and never publish tags to GitHub. CI runs
+Tests use temporary local bare remotes and a stub GitHub CLI for Release calls;
+they never publish tags or Releases to GitHub. The stub checks body transfer,
+operation order and failure recovery without requiring credentials. CI runs
 Bash syntax checks, ShellCheck, integration tests, and an actual composite-action
 smoke test on Ubuntu 22.04 and 24.04, plus actionlint for workflow validation.
 The smoke test also pushes exclusively to a temporary local bare remote.
