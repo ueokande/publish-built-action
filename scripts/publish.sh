@@ -7,7 +7,7 @@ fail() {
 }
 
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-cd "${PUBLISH_WORKING_DIRECTORY:-.}"
+cd -- "${PUBLISH_WORKING_DIRECTORY:-.}"
 [[ $(git rev-parse --is-inside-work-tree) == true ]] || fail 'A source checkout is required.'
 [[ -z $(git rev-parse --show-prefix) ]] || fail 'working-directory must be the repository root.'
 source_sha=$(git rev-parse --verify 'HEAD^{commit}')
@@ -42,6 +42,18 @@ done <<< "${PUBLISH_PATHS:-}"
 # Seed a separate index from HEAD, excluding unrelated staged and unstaged edits.
 temp_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-built-action.XXXXXX")
 trap 'rm -rf -- "$temp_dir"' EXIT
+source_release=${PUBLISH_SOURCE_RELEASE_TAG:-}
+release_url=''
+if [[ -n $source_release ]]; then
+  git check-ref-format "refs/tags/$source_release" || fail 'Invalid source-release-tag.'
+  [[ $source_release != "$tag" ]] || fail 'Source and distribution tags must differ.'
+  [[ -n ${GH_TOKEN:-} ]] || fail 'A token is required for Release creation.'
+  [[ -n ${PUBLISH_RELEASE_REPOSITORY:-} ]] || fail 'release-repository is required for Release creation.'
+  command -v gh > /dev/null || fail 'GitHub CLI is required for Release creation.'
+  # Fetch before publishing so a missing source Release cannot leave a new tag.
+  gh release view --repo "$PUBLISH_RELEASE_REPOSITORY" \
+    --json body --jq '.body' -- "$source_release" > "$temp_dir/release-notes.md"
+fi
 export GIT_INDEX_FILE="$temp_dir/index"
 git read-tree "$source_sha"
 git add --force -- "${paths[@]}"
@@ -65,11 +77,19 @@ tag_object=$(
 git -c push.followTags=false push --no-follow-tags \
   --force-with-lease="$ref:" origin "$tag_object:$ref"
 
-# Publish outputs only after a successful push. A failed Release step must retry
+if [[ -n $source_release ]]; then
+  if ! release_url=$(gh release create --repo "$PUBLISH_RELEASE_REPOSITORY" \
+    --verify-tag --title "$tag" --notes-file "$temp_dir/release-notes.md" -- "$tag"); then
+    fail "Tag $tag was pushed, but Release creation failed. Retry only Release creation; do not rerun this action."
+  fi
+fi
+
+# Publish outputs only after successful publication. A failed Release step must retry
 # Release creation alone, because this action intentionally rejects existing tags.
 {
   printf 'tag=%s\n' "$tag"
   printf 'commit=%s\n' "$commit"
   printf 'source=%s\n' "$source_sha"
+  printf 'release-url=%s\n' "$release_url"
 } >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 printf 'Published %s at %s (source %s).\n' "$tag" "$commit" "$source_sha"

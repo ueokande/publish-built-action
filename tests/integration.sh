@@ -11,6 +11,7 @@ export GIT_AUTHOR_NAME=Tester GIT_COMMITTER_NAME=Tester
 export GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_EMAIL=test@example.com
 count=0
 cases=0
+original_path=$PATH
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 eq() { [[ $1 == "$2" ]] || fail "Expected [$2], got [$1]"; }
@@ -33,6 +34,33 @@ fixture() {
   export PUBLISH_TAG=v1.2.3 PUBLISH_PATHS=dist PUBLISH_WORKING_DIRECTORY="$PWD"
   export GITHUB_OUTPUT="$root/outputs" RUNNER_TEMP="$root"
   : > "$GITHUB_OUTPUT"
+  unset PUBLISH_SOURCE_RELEASE_TAG PUBLISH_RELEASE_REPOSITORY
+  export MOCK_MODE=disabled MOCK_ROOT="$root"
+  mkdir "$root/bin"
+  cat > "$root/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$MOCK_ROOT/gh-calls"
+[[ $MOCK_MODE != disabled ]] || exit 99
+case "$1 $2" in
+  'release view')
+    [[ $* == 'release view --repo owner/project --json body --jq .body -- source-v1.2.3' ]]
+    ! git --git-dir="$MOCK_ROOT/remote.git" show-ref --verify --quiet refs/tags/v1.2.3
+    [[ $MOCK_MODE != read-failure ]] || exit 1
+    cat "$MOCK_ROOT/notes"
+    ;;
+  'release create')
+    [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --notes-file '*' -- v1.2.3' ]]
+    git --git-dir="$MOCK_ROOT/remote.git" show-ref --verify --quiet refs/tags/v1.2.3
+    cmp -- "$MOCK_ROOT/notes" "${9}"
+    [[ $MOCK_MODE != create-failure ]] || exit 1
+    printf 'https://github.com/owner/project/releases/tag/v1.2.3\n'
+    ;;
+  *) exit 99 ;;
+esac
+MOCK
+  chmod +x "$root/bin/gh"
+  export PATH="$root/bin:$original_path"
 }
 publish() { bash "$script" > "$root/log" 2>&1; }
 reject() {
@@ -57,6 +85,7 @@ before_status=$(git status --porcelain=v1)
 before_config=$(git config --local --list)
 publish
 commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+[[ ! -e $root/gh-calls ]] || fail 'Tag-only mode called GitHub CLI'
 eq "$(remote cat-file -t refs/tags/v1.2.3)" tag
 eq "$(remote rev-parse 'refs/tags/v1.2.3^{}')" "$commit"
 eq "$(remote rev-parse "$commit^")" "$source_sha"
@@ -193,5 +222,71 @@ unset GITHUB_OUTPUT
 if publish; then fail 'Missing output file unexpectedly succeeded'; fi
 absent
 pass 'missing output binding fails before publication'
+
+release_fixture() {
+  fixture
+  export PUBLISH_SOURCE_RELEASE_TAG=source-v1.2.3
+  export PUBLISH_RELEASE_REPOSITORY=owner/project
+  export MOCK_MODE=success
+  # Keep inherited credentials out of the stub: only presence is needed here.
+  export GH_TOKEN=test-only-not-a-credential
+  cat > "$root/notes" <<'NOTES'
+## Changes
+
+- Preserve `code`, "quotes", and $variables.
+
+NOTES
+}
+
+release_fixture
+publish
+eq "$(sed -n 's/^release-url=//p' "$GITHUB_OUTPUT")" 'https://github.com/owner/project/releases/tag/v1.2.3'
+eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 2
+pass 'source notes copied before push and Release created afterward with verified tag'
+
+release_fixture
+MOCK_MODE=read-failure
+reject
+absent
+eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
+pass 'source Release lookup failure prevents tag publication'
+
+release_fixture
+MOCK_MODE=create-failure
+reject
+remote show-ref --verify --quiet refs/tags/v1.2.3 || fail 'Published tag was removed'
+eq "$(git rev-parse HEAD)" "$source_sha"
+[[ $(cat "$root/log") == *'Retry only Release creation'* ]] || fail 'Missing recovery guidance'
+[[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Notes leaked'
+pass 'Release creation failure preserves tag, cleans notes and explains recovery'
+
+release_fixture
+GH_TOKEN=''
+reject
+absent
+pass 'missing Release token fails before push'
+
+release_fixture
+PUBLISH_SOURCE_RELEASE_TAG=$PUBLISH_TAG
+reject
+absent
+pass 'source and distribution Release tags must differ'
+
+release_fixture
+PUBLISH_SOURCE_RELEASE_TAG='bad tag'
+reject
+absent
+pass 'invalid source Release tag is rejected before push'
+
+release_fixture
+cat > "$root/remote.git/hooks/pre-receive" <<'HOOK'
+#!/usr/bin/env bash
+exit 1
+HOOK
+chmod +x "$root/remote.git/hooks/pre-receive"
+reject
+absent
+eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
+pass 'rejected tag push never attempts Release creation'
 
 printf 'Passed %s integration scenarios.\n' "$cases"

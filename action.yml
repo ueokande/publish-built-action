@@ -1,5 +1,5 @@
 name: Publish built action
-description: Create a distribution commit with built files and push an immutable annotated tag.
+description: Create a distribution commit with built files and push an immutable tag, and optionally copy a source GitHub Release.
 inputs:
   tag:
     description: New release tag name. Existing local or remote tags are rejected.
@@ -10,6 +10,15 @@ inputs:
   working-directory:
     description: Repository root containing the caller's source checkout and built files.
     default: .
+  source-release-tag:
+    description: Source GitHub Release tag whose body is copied to a new distribution Release. Empty disables Release creation.
+    default: ''
+  release-repository:
+    description: Repository containing the source and distribution Releases; must match the checkout origin.
+    default: ${{ github.repository }}
+  token:
+    description: GitHub API token for reading the source Release and creating the distribution Release. Does not configure Git authentication.
+    default: ${{ github.token }}
 outputs:
   tag:
     description: Published tag name.
@@ -20,15 +29,21 @@ outputs:
   source:
     description: Source HEAD SHA used as the distribution commit's parent.
     value: ${{ steps.publish.outputs.source }}
+  release-url:
+    description: Created GitHub Release URL, or empty when Release creation is disabled.
+    value: ${{ steps.publish.outputs.release-url }}
 runs:
   using: composite
   steps:
-    - name: Publish distribution tag
+    - name: Publish distribution
       id: publish
       shell: bash
       env:
         PUBLISH_TAG: ${{ inputs.tag }}
         PUBLISH_PATHS: ${{ inputs.paths }}
         PUBLISH_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PUBLISH_SOURCE_RELEASE_TAG: ${{ inputs.source-release-tag }}
+        PUBLISH_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
+        GH_TOKEN: ${{ inputs.token }}
         PUBLISH_ACTION_PATH: ${{ github.action_path }}
       run: bash "$PUBLISH_ACTION_PATH/scripts/publish.sh"
