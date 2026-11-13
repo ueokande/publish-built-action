@@ -231,7 +231,10 @@ Use that as `release-please-config.json` with an initialized
 Release-please creates `source-v1.2.3`; the distribution action creates `v1.2.3`
 using its `version` output. Do not let release-please create the distribution tag
 first. This example uses root-package outputs; monorepos need path-prefixed outputs.
-Replace `master` with your development branch if necessary.
+The distribution Release copies the source Release body rather than generating
+new notes. Fetch the body before publishing the tag so a failed read does not
+leave a distribution tag without its notes. Replace `master` with your development
+branch if necessary.
 
 ```yaml
 name: Release with release-please
@@ -253,6 +256,7 @@ jobs:
     outputs:
       created: ${{ steps.release.outputs.release_created }}
       source: ${{ steps.release.outputs.sha }}
+      source_tag: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
       - uses: googleapis/release-please-action@v4
@@ -279,6 +283,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Copy source GitHub Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_TAG: ${{ needs.release.outputs.source_tag }}
+        run: gh release view "$SOURCE_TAG" --json body --jq '.body' > "$RUNNER_TEMP/release-notes.md"
       - uses: ueokande/publish-built-action@REVIEWED_COMMIT_SHA
         id: publish
         with:
@@ -288,7 +297,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.publish.outputs.tag }}
-        run: gh release create "$RELEASE_TAG" --verify-tag --generate-notes
+        run: gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
 ```
 
 ## Recover a failed GitHub Release step
@@ -302,7 +311,15 @@ from an authenticated checkout or a separate manually dispatched recovery job:
 gh release create v1.2.3 --verify-tag --generate-notes
 ```
 
-Use the same title and notes options as the original release step if needed.
+For the release-please example, copy the source Release notes again and create
+only the distribution Release, using the actual source and distribution tags:
+
+```bash
+gh release view source-v1.2.3 --json body --jq '.body' > release-notes.md
+gh release create v1.2.3 --verify-tag --title v1.2.3 --notes-file release-notes.md
+```
+
+Do not use `--generate-notes` for this recovery; preserve the source Release body.
 First check `gh release view v1.2.3` if the API outcome was uncertain. If a Release
 already exists, inspect it rather than recreating or moving the tag. A source
 release created by release-please is separate from the distribution release.
