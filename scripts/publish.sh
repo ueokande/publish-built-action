@@ -42,14 +42,23 @@ done <<< "${PUBLISH_PATHS:-}"
 # Seed a separate index from HEAD, excluding unrelated staged and unstaged edits.
 temp_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-built-action.XXXXXX")
 trap 'rm -rf -- "$temp_dir"' EXIT
+create_release=${PUBLISH_CREATE_RELEASE:-false}
+copy_notes=${PUBLISH_COPY_RELEASE_NOTES:-false}
 source_release=${PUBLISH_SOURCE_RELEASE_TAG:-}
 release_url=''
-if [[ -n $source_release ]]; then
-  git check-ref-format "refs/tags/$source_release" || fail 'Invalid source-release-tag.'
-  [[ $source_release != "$tag" ]] || fail 'Source and distribution tags must differ.'
+[[ $create_release == true || $create_release == false ]] || fail 'create-release must be true or false.'
+[[ $copy_notes == true || $copy_notes == false ]] || fail 'copy-release-notes must be true or false.'
+[[ $copy_notes == false || $create_release == true ]] || fail 'copy-release-notes requires create-release.'
+[[ -z $source_release || $copy_notes == true ]] || fail 'source-release-tag requires copy-release-notes.'
+if [[ $create_release == true ]]; then
   [[ -n ${GH_TOKEN:-} ]] || fail 'A token is required for Release creation.'
   [[ -n ${PUBLISH_RELEASE_REPOSITORY:-} ]] || fail 'release-repository is required for Release creation.'
   command -v gh > /dev/null || fail 'GitHub CLI is required for Release creation.'
+fi
+if [[ $copy_notes == true ]]; then
+  [[ -n $source_release ]] || fail 'source-release-tag is required to copy Release notes.'
+  git check-ref-format "refs/tags/$source_release" || fail 'Invalid source-release-tag.'
+  [[ $source_release != "$tag" ]] || fail 'Source and distribution tags must differ.'
   # Fetch before publishing so a missing source Release cannot leave a new tag.
   gh release view --repo "$PUBLISH_RELEASE_REPOSITORY" \
     --json body --jq '.body' -- "$source_release" > "$temp_dir/release-notes.md"
@@ -77,9 +86,13 @@ tag_object=$(
 git -c push.followTags=false push --no-follow-tags \
   --force-with-lease="$ref:" origin "$tag_object:$ref"
 
-if [[ -n $source_release ]]; then
+if [[ $create_release == true ]]; then
+  notes_args=(--generate-notes)
+  if [[ $copy_notes == true ]]; then
+    notes_args=(--notes-file "$temp_dir/release-notes.md")
+  fi
   if ! release_url=$(gh release create --repo "$PUBLISH_RELEASE_REPOSITORY" \
-    --verify-tag --title "$tag" --notes-file "$temp_dir/release-notes.md" -- "$tag"); then
+    --verify-tag --title "$tag" "${notes_args[@]}" -- "$tag"); then
     fail "Tag $tag was pushed, but Release creation failed. Retry only Release creation; do not rerun this action."
   fi
 fi

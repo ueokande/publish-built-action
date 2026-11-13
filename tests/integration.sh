@@ -35,6 +35,7 @@ fixture() {
   export GITHUB_OUTPUT="$root/outputs" RUNNER_TEMP="$root"
   : > "$GITHUB_OUTPUT"
   unset PUBLISH_SOURCE_RELEASE_TAG PUBLISH_RELEASE_REPOSITORY
+  export PUBLISH_CREATE_RELEASE=false PUBLISH_COPY_RELEASE_NOTES=false
   export MOCK_MODE=disabled MOCK_ROOT="$root"
   mkdir "$root/bin"
   cat > "$root/bin/gh" <<'MOCK'
@@ -50,9 +51,13 @@ case "$1 $2" in
     cat "$MOCK_ROOT/notes"
     ;;
   'release create')
-    [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --notes-file '*' -- v1.2.3' ]]
+    if [[ $PUBLISH_COPY_RELEASE_NOTES == true ]]; then
+      [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --notes-file '*' -- v1.2.3' ]]
+      cmp -- "$MOCK_ROOT/notes" "${9}"
+    else
+      [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --generate-notes -- v1.2.3' ]]
+    fi
     git --git-dir="$MOCK_ROOT/remote.git" show-ref --verify --quiet refs/tags/v1.2.3
-    cmp -- "$MOCK_ROOT/notes" "${9}"
     [[ $MOCK_MODE != create-failure ]] || exit 1
     printf 'https://github.com/owner/project/releases/tag/v1.2.3\n'
     ;;
@@ -225,6 +230,7 @@ pass 'missing output binding fails before publication'
 
 release_fixture() {
   fixture
+  export PUBLISH_CREATE_RELEASE=true PUBLISH_COPY_RELEASE_NOTES=true
   export PUBLISH_SOURCE_RELEASE_TAG=source-v1.2.3
   export PUBLISH_RELEASE_REPOSITORY=owner/project
   export MOCK_MODE=success
@@ -288,5 +294,44 @@ reject
 absent
 eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
 pass 'rejected tag push never attempts Release creation'
+
+release_fixture
+PUBLISH_COPY_RELEASE_NOTES=false
+unset PUBLISH_SOURCE_RELEASE_TAG
+publish
+eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
+eq "$(sed -n 's/^release-url=//p' "$GITHUB_OUTPUT")" 'https://github.com/owner/project/releases/tag/v1.2.3'
+pass 'Release creation without copying uses generated notes and no source lookup'
+
+release_fixture
+PUBLISH_CREATE_RELEASE=false
+reject
+absent
+[[ ! -e $root/gh-calls ]] || fail 'Invalid options called GitHub CLI'
+pass 'copying without Release creation is rejected before publication'
+
+release_fixture
+unset PUBLISH_SOURCE_RELEASE_TAG
+reject
+absent
+pass 'copying requires a source Release tag'
+
+release_fixture
+PUBLISH_COPY_RELEASE_NOTES=false
+reject
+absent
+pass 'source Release tag without copying is rejected'
+
+fixture
+PUBLISH_CREATE_RELEASE=yes
+reject
+absent
+pass 'invalid create-release boolean is rejected'
+
+fixture
+PUBLISH_COPY_RELEASE_NOTES=yes
+reject
+absent
+pass 'invalid copy-release-notes boolean is rejected'
 
 printf 'Passed %s integration scenarios.\n' "$cases"

@@ -20,11 +20,12 @@ files in that checkout. This action:
    force-adding ignored files.
 3. Creates a child distribution commit and an annotated tag with source provenance.
 4. Pushes only that tag to `origin`.
-5. If `source-release-tag` is set, creates a published GitHub Release for the new
-   tag with the source Release body and the distribution tag as its title.
+5. If `create-release` is `true`, creates a published GitHub Release for the new
+   tag, using the distribution tag as its title. With `copy-release-notes: true`,
+   it copies the source Release body; otherwise GitHub generates the notes.
 6. Returns outputs after all requested operations succeed.
 
-When Release creation is enabled, the source body is fetched before the tag push.
+When copying is enabled, the source body is fetched before the tag push.
 A failed source read prevents publication. A failed Release creation leaves the
 already-pushed tag intact and fails the action; retry only Release creation.
 
@@ -43,9 +44,8 @@ provide server-side tag protection: configure GitHub tag rulesets to prevent
 other actors from updating or deleting release tags.
 
 This action does not decide versions, check out source, build, test, transfer
-artifacts, generate release notes, publish npm packages, maintain
-a distribution branch, or update floating tags such as `v1`. Optional Release
-creation copies only the body, not assets, title, draft status or prerelease status;
+artifacts, publish npm packages, maintain
+a distribution branch, or update floating tags such as `v1`. Copying preserves only the body, not assets, title, draft status or prerelease status;
 it creates a normal published Release. It never edits an existing Release.
 
 ## Inputs and outputs
@@ -55,9 +55,32 @@ it creates a normal published Release. It never edits an existing Release.
 | `tag` | Yes | — | New tag name, for example `v1.2.3`. Must be a valid Git tag ref. |
 | `paths` | Yes | — | Newline-separated literal artifact paths relative to the source repository root. |
 | `working-directory` | No | `.` | Source repository root; useful for checkouts in a subdirectory. |
-| `source-release-tag` | No | Empty | Enable Release creation by copying this source Release's body. Must differ from `tag`. |
+| `create-release` | No | `false` | Create a GitHub Release after the tag push. Accepts only `true` or `false`. |
+| `copy-release-notes` | No | `false` | Copy the source Release body instead of generating notes. Requires `create-release: true`. |
+| `source-release-tag` | No | Empty | Required when copying; must differ from `tag`. Must be omitted when copying is disabled. |
 | `release-repository` | No | `${{ github.repository }}` | Repository for both Releases, in `OWNER/REPO` form; must match the checkout's `origin`. |
 | `token` | No | `${{ github.token }}` | GitHub API token used only for optional Release operations; does not configure Git authentication. |
+
+Release creation and note copying are separate options:
+
+| `create-release` | `copy-release-notes` | Behavior |
+| --- | --- | --- |
+| `false` | `false` | Publish the tag only; no GitHub API calls. This is the default. |
+| `true` | `false` | Create a Release using GitHub-generated notes; no source Release required. |
+| `true` | `true` | Copy the body from `source-release-tag` into the new Release. |
+| `false` | `true` | Invalid; fails before the tag push. |
+
+Both boolean inputs accept the exact strings `true` and `false`. Invalid values,
+missing source tags when copying, and unused source tags when not copying fail
+before publication. To create a Release without copying:
+
+```yaml
+with:
+  tag: v1.2.3
+  paths: dist
+  create-release: 'true'
+  copy-release-notes: 'false'
+```
 
 Paths may name files or directories, including ignored paths and names containing
 spaces. Globs are not expanded: `dist/*` means a file literally named `*` within
@@ -306,6 +329,8 @@ jobs:
         with:
           tag: v${{ needs.release.outputs.version }}
           paths: dist
+          create-release: 'true'
+          copy-release-notes: 'true'
           source-release-tag: ${{ needs.release.outputs.source_tag }}
 ```
 
@@ -316,7 +341,8 @@ action or the entire publishing job**. The existing tag will correctly cause an
 error. Verify the remote tag and retry only GitHub Release creation from an
 authenticated checkout or a separate manually dispatched recovery job.
 
-Copy the source Release notes again and create only the distribution Release,
+If copying was enabled, copy the source Release notes again and create only the
+distribution Release,
 using the actual repository, source tag and distribution tag. Authenticate `gh`
 with a token that has `contents: write`:
 
@@ -325,7 +351,15 @@ gh release view source-v1.2.3 --repo OWNER/REPO --json body --jq '.body' > relea
 gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes-file release-notes.md
 ```
 
-Do not use `--generate-notes` for this recovery; preserve the source Release body.
+For a release originally created with copying disabled, retry only its creation
+with generated notes instead:
+
+```bash
+gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --generate-notes
+```
+
+When copying was enabled, preserve the source body with `--notes-file` rather than
+switching to `--generate-notes`.
 First check `gh release view v1.2.3` if the API outcome was uncertain. If a Release
 already exists, inspect it rather than recreating or moving the tag. A source
 release created by release-please is separate from the distribution release.
