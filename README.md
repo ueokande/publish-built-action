@@ -4,9 +4,6 @@ Create a distribution commit containing prebuilt artifacts and push a new,
 annotated release tag. Keep generated JavaScript out of your development branch
 while making an action consumable directly from a release tag.
 
-Inspired by the distribution step in
-[ueokande/kypa](https://github.com/ueokande/kypa/blob/master/.github/workflows/release.yaml).
-
 This is a composite action implemented with Bash and Git. Supported environments
 are GitHub-hosted Ubuntu runners (`ubuntu-22.04` and `ubuntu-24.04`, including
 `ubuntu-latest`). No Node.js runtime, package installation, or full Git history
