@@ -1,0 +1,34 @@
+name: Publish built action
+description: Create a distribution commit with built files and push an immutable annotated tag.
+inputs:
+  tag:
+    description: New release tag name. Existing local or remote tags are rejected.
+    required: true
+  paths:
+    description: Newline-separated literal paths to built files or directories, relative to the repository root.
+    required: true
+  working-directory:
+    description: Repository root containing the caller's source checkout and built files.
+    default: .
+outputs:
+  tag:
+    description: Published tag name.
+    value: ${{ steps.publish.outputs.tag }}
+  commit:
+    description: Distribution commit SHA targeted by the annotated tag.
+    value: ${{ steps.publish.outputs.commit }}
+  source:
+    description: Source HEAD SHA used as the distribution commit's parent.
+    value: ${{ steps.publish.outputs.source }}
+runs:
+  using: composite
+  steps:
+    - name: Publish distribution tag
+      id: publish
+      shell: bash
+      env:
+        PUBLISH_TAG: ${{ inputs.tag }}
+        PUBLISH_PATHS: ${{ inputs.paths }}
+        PUBLISH_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PUBLISH_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$PUBLISH_ACTION_PATH/scripts/publish.sh"
