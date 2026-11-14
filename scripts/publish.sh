@@ -114,14 +114,12 @@ validate_signing() {
 }
 
 validate_release() {
-  local notes_modes=0
   validate_boolean create-release "$create_release"
   validate_boolean generate-release-notes "$generate_notes"
-  [[ -z $source_release ]] || notes_modes=$((notes_modes + 1))
-  [[ $generate_notes == false ]] || notes_modes=$((notes_modes + 1))
-  [[ -z $release_notes ]] || notes_modes=$((notes_modes + 1))
-  (( notes_modes <= 1 )) || fail 'Choose only one of copy-release-notes-from, generate-release-notes and release-notes.'
-  [[ $notes_modes == 0 || $create_release == true ]] || fail 'Release notes options require create-release.'
+  [[ -z $source_release || $generate_notes == false ]] || fail 'Choose only one of copy-release-notes-from and generate-release-notes.'
+  if [[ -n $source_release || $generate_notes == true ]]; then
+    [[ $create_release == true ]] || fail 'Release notes options require create-release.'
+  fi
   if [[ $create_release == true ]]; then
     [[ -n ${GH_TOKEN:-} ]] || fail 'A token is required for Release creation.'
     [[ -n $release_repository ]] || fail 'release-repository is required for Release creation.'
@@ -237,7 +235,7 @@ push_distribution_tags() {
 
 create_github_release() {
   if [[ $create_release == false ]]; then return 0; fi
-  local notes_args=(--notes "$release_notes")
+  local notes_args=(--notes '')
   if [[ -n $source_release ]]; then
     notes_args=(--notes-file "$temp_dir/release-notes.md")
   elif [[ $generate_notes == true ]]; then
@@ -273,7 +271,7 @@ main() {
   local create_release=${PUBLISH_CREATE_RELEASE:-false}
   local source_release=${PUBLISH_COPY_RELEASE_NOTES_FROM:-}
   local generate_notes=${PUBLISH_GENERATE_RELEASE_NOTES:-false}
-  local release_notes=${PUBLISH_RELEASE_NOTES:-} release_repository=${PUBLISH_RELEASE_REPOSITORY:-}
+  local release_repository=${PUBLISH_RELEASE_REPOSITORY:-}
   local temp_base=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
 
   # Phase functions share these inputs, prepared options and publication results.

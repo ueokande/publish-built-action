@@ -45,7 +45,7 @@ fixture() {
   export GITHUB_OUTPUT="$root/outputs" RUNNER_TEMP="$root"
   : > "$GITHUB_OUTPUT"
   unset PUBLISH_FLOATING_TAGS
-  unset PUBLISH_COPY_RELEASE_NOTES_FROM PUBLISH_RELEASE_REPOSITORY PUBLISH_RELEASE_NOTES
+  unset PUBLISH_COPY_RELEASE_NOTES_FROM PUBLISH_RELEASE_REPOSITORY
   export PUBLISH_GENERATE_RELEASE_NOTES=false
   unset PUBLISH_SIGNING_KEY PUBLISH_AUTHOR_NAME PUBLISH_AUTHOR_EMAIL
   export PUBLISH_SIGN_COMMIT=false PUBLISH_SIGN_TAG=false
@@ -72,7 +72,7 @@ case "$1 $2" in
       [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --generate-notes -- v1.2.3' ]]
     else
       [[ ${*:1:7} == 'release create --repo owner/project --verify-tag --title v1.2.3' ]]
-      [[ $# == 11 && ${8} == --notes && ${9} == "${PUBLISH_RELEASE_NOTES:-}" && ${10} == -- && ${11} == v1.2.3 ]]
+      [[ $# == 11 && ${8} == --notes && -z ${9} && ${10} == -- && ${11} == v1.2.3 ]]
     fi
     git --git-dir="$MOCK_ROOT/remote.git" show-ref --verify --quiet refs/tags/v1.2.3
     [[ $MOCK_MODE != create-failure ]] || exit 1
@@ -386,43 +386,20 @@ eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
 pass 'generated notes use only --generate-notes and skip source lookup'
 
 release_fixture
+PUBLISH_GENERATE_RELEASE_NOTES=true
+reject
+absent
+[[ ! -e $root/gh-calls ]] || fail 'Conflicting options called GitHub CLI'
+pass 'copying and generation are mutually exclusive before publication'
+
+release_fixture
 unset PUBLISH_COPY_RELEASE_NOTES_FROM
-export PUBLISH_RELEASE_NOTES
-PUBLISH_RELEASE_NOTES=$(cat <<'NOTES'
-## Explicit notes
-
-- Preserve "quotes", `code` and $variables.
---generate-notes
-NOTES
-)
-publish
-pass 'explicit multiline notes are passed as one literal --notes argument'
-
-for mode in copy-generate copy-explicit generate-explicit all; do
-  release_fixture
-  if [[ $mode == generate-explicit ]]; then unset PUBLISH_COPY_RELEASE_NOTES_FROM; fi
-  if [[ $mode != copy-explicit ]]; then PUBLISH_GENERATE_RELEASE_NOTES=true; fi
-  if [[ $mode != copy-generate ]]; then export PUBLISH_RELEASE_NOTES='Explicit notes'; fi
-  reject
-  absent
-  [[ ! -e $root/gh-calls ]] || fail 'Conflicting options called GitHub CLI'
-  pass "conflicting note sources rejected before publication: $mode"
-done
-
-for mode in generate explicit; do
-  release_fixture
-  unset PUBLISH_COPY_RELEASE_NOTES_FROM
-  PUBLISH_CREATE_RELEASE=false
-  if [[ $mode == generate ]]; then
-    PUBLISH_GENERATE_RELEASE_NOTES=true
-  else
-    export PUBLISH_RELEASE_NOTES='Explicit notes'
-  fi
-  reject
-  absent
-  [[ ! -e $root/gh-calls ]] || fail 'Disabled Release called GitHub CLI'
-  pass "$mode notes require Release creation"
-done
+PUBLISH_CREATE_RELEASE=false
+PUBLISH_GENERATE_RELEASE_NOTES=true
+reject
+absent
+[[ ! -e $root/gh-calls ]] || fail 'Disabled Release called GitHub CLI'
+pass 'generated notes require Release creation'
 
 fixture
 PUBLISH_GENERATE_RELEASE_NOTES=yes

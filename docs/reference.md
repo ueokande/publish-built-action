@@ -70,24 +70,10 @@ tag. Copying preserves only the source body, not its title, assets, draft status
 or prerelease status. Both Releases must be in `release-repository`, which must
 match the checkout's `origin`. Existing Releases are never edited.
 
-Choose only one of `copy-release-notes-from`, `generate-release-notes: 'true'`
-and a nonempty `release-notes` body. Conflicts and note options supplied with
-`create-release: 'false'` fail before publication. With no note source, the body
-is empty; generation is never implicit.
-
-For explicit notes, YAML multiline values are passed literally as one `--notes`
-argument, without shell expansion:
-
-```yaml
-with:
-  create-release: 'true'
-  release-notes: |
-    ## Changes
-    - Add a new feature.
-```
-
-To generate notes instead, set `generate-release-notes: 'true'` and omit both
-`release-notes` and `copy-release-notes-from`.
+`copy-release-notes-from` and `generate-release-notes: 'true'` are mutually
+exclusive and require `create-release: 'true'`. Invalid combinations fail before
+publication. With neither selected, the body is empty; generation is never
+implicit.
 
 The source body is fetched before the tag push; a failed read prevents
 publication. Release creation happens after the push, so a failure there leaves
@@ -112,13 +98,6 @@ with a token that has `contents: write`:
 ```bash
 gh release view source-v1.2.3 --repo OWNER/REPO --json body --jq '.body' > release-notes.md
 gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes-file release-notes.md
-```
-
-For explicitly supplied notes, retry using the original body (or put it in a
-file and use `--notes-file`):
-
-```bash
-gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes 'Your original release notes'
 ```
 
 For generated notes:
