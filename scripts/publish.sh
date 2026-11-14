@@ -97,15 +97,14 @@ commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" | git "${si
 # Keep the tag ref in a disposable repository while sharing the object database.
 object_directory=$(git rev-parse --path-format=absolute --git-path objects)
 object_format=$(git rev-parse --show-object-format)
-tag_object=$(
-  git init --quiet --bare --initial-branch=distribution --object-format="$object_format" "$temp_dir/tag.git"
-  export GIT_OBJECT_DIRECTORY="$object_directory"
-  # The disposable branch starts with an orphan root commit.
+git init --quiet --bare --initial-branch=distribution --object-format="$object_format" "$temp_dir/tag.git"
+# The disposable branch starts with an orphan root commit.
+GIT_OBJECT_DIRECTORY="$object_directory" \
   git --git-dir="$temp_dir/tag.git" update-ref refs/heads/distribution "$commit"
+GIT_OBJECT_DIRECTORY="$object_directory" \
   git "${signing_config[@]}" --git-dir="$temp_dir/tag.git" tag --annotate "${tag_signing[@]}" \
     --message="Release $tag (source $source_sha)" -- "$tag" "$commit"
-  git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref"
-)
+tag_object=$(GIT_OBJECT_DIRECTORY="$object_directory" git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref")
 
 # The empty expected value requires the remote ref to be absent, including races.
 # Explicit refspec and disabled followTags prevent publishing other refs.
