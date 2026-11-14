@@ -4,6 +4,7 @@
 
 Use `sign-commit` and `sign-tag` independently, or enable both. Both default to
 `false`; repository-level automatic signing settings do not enable them.
+`sign-tag` applies to the fixed tag and every explicitly selected floating tag.
 When either is enabled, `signing-key` must identify an imported OpenPGP private
 key. A full fingerprint is recommended. SSH and X.509 signing are not supported.
 The caller imports the key and makes it available for unattended signing through
@@ -12,7 +13,8 @@ GPG and its agent; this action does not import keys or accept a passphrase.
 Signing uses the caller's `GNUPGHOME` and OpenPGP program (`gpg.openpgp.program`,
 then `gpg.program`, otherwise `gpg`). Git configuration is applied per command,
 including in the temporary tag repository, without modifying the caller's config.
-If signing a commit or tag fails, no tag is pushed and no Release is created.
+All tag signatures are prepared before pushing. If signing a commit or any tag
+fails, no tag is pushed and no Release is created.
 
 ## Example
 

@@ -14,7 +14,9 @@ Tests use temporary local bare remotes and a stub GitHub CLI for Release calls;
 they never publish tags or Releases to GitHub. Signing tests generate an isolated
 ephemeral key, verify commit and tag signatures, and remove the test keyring and
 its GPG agent afterward. The stub checks body transfer,
-operation order and failure recovery without requiring credentials. CI runs
+operation order and failure recovery without requiring credentials. Floating-tag
+tests cover atomic rejection, concurrent ref updates, downgrade checks and
+independent tag signatures. CI runs
 Bash syntax checks, ShellCheck, integration tests, and an actual composite-action
 smoke test on Ubuntu 22.04 and 24.04, plus actionlint for workflow validation.
 The smoke test also pushes exclusively to a temporary local bare remote.

@@ -17,7 +17,8 @@ Source branch          Package contents          Release tag
 
 Each release tag points to an independent, parentless commit. Arrows show file
 transfer, not commit ancestry. Only tags are pushed; the source checkout is
-preserved. Existing tags are rejected.
+preserved. Existing fixed tags are rejected; only explicitly listed floating
+tags can move.
 
 Supported on GitHub-hosted Ubuntu 22.04 and 24.04, including `ubuntu-latest`.
 The caller checks out, builds and tests the source. This Bash/Git action
@@ -77,6 +78,7 @@ jobs:
 | Input | Default | Description |
 | --- | --- | --- |
 | `tag` | Required | New immutable distribution tag, such as `v1.2.3`. |
+| `floating-tags` | Empty | Newline-separated tags to create or update alongside the fixed tag, such as `v1` or `stable`. See [rules](docs/floating-tags.md). |
 | `paths` | Required | Newline-separated literal distribution paths, relative to the checkout root. Include `action.yml`, documentation and other required files explicitly. |
 | `working-directory` | `.` | Source checkout root. |
 | `sign-commit` | `false` | GPG-sign the distribution commit. |
@@ -93,6 +95,27 @@ jobs:
 
 Paths must exist. Directories are included recursively; globs are not expanded.
 See [path rules](docs/reference.md#path-rules) for details.
+
+## Floating tags
+
+Optionally move aliases such as `v1`, `v1.2` or `stable` to the same distribution
+commit as the fixed version:
+
+```yaml
+with:
+  tag: v1.2.3
+  floating-tags: |
+    v1
+    v1.2
+    stable
+  paths: |
+    action.yml
+    dist
+```
+
+With floating tags, `tag` must be a stable `vMAJOR.MINOR.PATCH` version. All tags
+are pushed atomically with conflict and downgrade checks; the fixed tag is never
+overwritten. See [update rules and migration](docs/floating-tags.md).
 
 ## GitHub Releases
 
@@ -145,6 +168,7 @@ Outputs are available after all requested operations succeed.
 - [Separate build and publish jobs using artifacts](docs/examples.md#separate-build-and-publication-jobs)
 - [Use release-please outputs and copy source release notes](docs/examples.md#use-release-please-outputs)
 - [Publication behavior, path rules and recovery](docs/reference.md)
+- [Floating tags, atomic updates and migration](docs/floating-tags.md)
 - [GPG signing and identity setup](docs/signing.md)
 - [Tests and workflow lockfile maintenance](docs/development.md)
 

@@ -15,11 +15,14 @@ release history. The source SHA is recorded in the commit message, tag annotatio
 and `source` output. The default identity is `github-actions[bot]`, with email
 `41898282+github-actions[bot]@users.noreply.github.com`.
 
-Only the tag is pushed. The caller's branch, HEAD, index, local tags and Git
-configuration are preserved. Existing local or remote tags are rejected, even
+Only the fixed tag and explicitly selected floating tags are pushed. The
+caller's branch, HEAD, index, local tags and Git configuration are preserved.
+Existing local or remote fixed tags are rejected, even
 when they target the expected commit. An absent-ref lease prevents overwriting
-a concurrently created remote tag. Use GitHub tag rulesets if other actors must
-also be prevented from moving or deleting tags.
+a concurrently created fixed tag. [Floating tag updates](floating-tags.md) use
+leases against their observed objects and share the fixed tag's atomic push.
+Use GitHub tag rulesets if other actors must also be prevented from moving or
+deleting tags.
 
 ## Path rules
 
@@ -88,8 +91,8 @@ To generate notes instead, set `generate-release-notes: 'true'` and omit both
 
 The source body is fetched before the tag push; a failed read prevents
 publication. Release creation happens after the push, so a failure there leaves
-the tag intact. Success outputs are written only after all requested operations
-succeed. If a connection is lost, inspect the remote tag and Release before
+the fixed and floating tags intact. Success outputs are written only after all
+requested operations succeed. If a connection is lost, inspect the remote tag and Release before
 retrying. Locally created objects can remain unreachable after failure, but no
 release ref is left in the caller's repository. Finish builds and avoid concurrent
 checkout modifications before calling the action.
