@@ -47,7 +47,7 @@ fixture() {
   unset PUBLISH_FLOATING_TAGS
   unset PUBLISH_COPY_RELEASE_NOTES_FROM PUBLISH_RELEASE_REPOSITORY
   export PUBLISH_GENERATE_RELEASE_NOTES=false
-  unset PUBLISH_SIGNING_KEY PUBLISH_AUTHOR_NAME PUBLISH_AUTHOR_EMAIL
+  unset PUBLISH_SIGNING_KEY PUBLISH_AUTHOR_NAME PUBLISH_AUTHOR_EMAIL PUBLISH_GPG_PRIVATE_KEY PUBLISH_GPG_PASSPHRASE
   export PUBLISH_SIGN_COMMIT=false PUBLISH_SIGN_TAG=false
   export PUBLISH_CREATE_RELEASE=false
   export MOCK_MODE=disabled MOCK_ROOT="$root"
@@ -772,5 +772,120 @@ publish
 eq "$(remote rev-parse "refs/tags/$literal_alias^{}")" "$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")"
 [[ ! -e unexpected-marker ]] || fail 'Floating tag data was evaluated as shell code'
 pass 'floating tag names remain literal during lookup and update'
+
+# Export keys only to the isolated suite directory; never print their contents.
+gpg --batch --armor --export-secret-keys "$fingerprint" > "$suite/signing-key.asc"
+passphrase='test-only signing passphrase'
+gpg --batch --pinentry-mode loopback --passphrase "$passphrase" \
+  --quick-generate-key 'Protected Signing Test <protected@example.com>' ed25519 sign 0 > "$suite/protected-keygen.log" 2>&1
+protected_fingerprint=$(gpg --batch --with-colons --list-secret-keys protected@example.com 2> /dev/null | awk -F: '$1 == "fpr" {print $10; exit}')
+gpg --batch --pinentry-mode loopback --passphrase "$passphrase" --armor \
+  --export-secret-keys "$protected_fingerprint" > "$suite/protected-key.asc"
+gpg --batch --armor --export "$fingerprint" > "$suite/public-key.asc"
+
+imported_key_fixture() {
+  fixture
+  export PUBLISH_SIGN_COMMIT=true PUBLISH_SIGN_TAG=true
+  export PUBLISH_GPG_PRIVATE_KEY
+  PUBLISH_GPG_PRIVATE_KEY=$(cat "$suite/signing-key.asc")
+}
+
+for protection in unprotected protected; do
+  imported_key_fixture
+  if [[ $protection == protected ]]; then
+    PUBLISH_GPG_PRIVATE_KEY=$(cat "$suite/protected-key.asc")
+    export PUBLISH_GPG_PASSPHRASE="$passphrase"
+    expected_fingerprint=$protected_fingerprint
+  else
+    expected_fingerprint=$fingerprint
+  fi
+  export PUBLISH_FLOATING_TAGS=stable
+  before_keys=$(gpg --batch --with-colons --list-secret-keys 2> /dev/null)
+  before_config=$(git config --local --list)
+  publish
+  commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+  remote verify-commit --raw "$commit" > "$root/verify-commit" 2>&1
+  [[ $(cat "$root/verify-commit") == *"VALIDSIG $expected_fingerprint "* ]] || fail 'Wrong imported commit key'
+  for alias in v1.2.3 stable; do
+    remote verify-tag --raw "refs/tags/$alias" > "$root/verify-tag" 2>&1
+    [[ $(cat "$root/verify-tag") == *"VALIDSIG $expected_fingerprint "* ]] || fail 'Wrong imported tag key'
+  done
+  eq "$(gpg --batch --with-colons --list-secret-keys 2> /dev/null)" "$before_keys"
+  eq "$(git config --local --list)" "$before_config"
+  [[ $(cat "$root/log") != *"$PUBLISH_GPG_PRIVATE_KEY"* ]] || fail 'Private key appeared in logs'
+  if [[ -n ${PUBLISH_GPG_PASSPHRASE:-} ]]; then
+    [[ $(cat "$root/log") != *"$PUBLISH_GPG_PASSPHRASE"* ]] || fail 'Passphrase appeared in logs'
+  fi
+  [[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Imported private keyring leaked'
+  pass "private key import signs commits and aliases with automatic fingerprint selection: $protection"
+done
+
+for invalid in wrong-passphrase invalid-key public-key-only missing-selected-key; do
+  imported_key_fixture
+  case "$invalid" in
+    wrong-passphrase)
+      PUBLISH_GPG_PRIVATE_KEY=$(cat "$suite/protected-key.asc")
+      export PUBLISH_GPG_PASSPHRASE='incorrect passphrase'
+      ;;
+    invalid-key) PUBLISH_GPG_PRIVATE_KEY='not a private key' ;;
+    public-key-only) PUBLISH_GPG_PRIVATE_KEY=$(cat "$suite/public-key.asc") ;;
+    missing-selected-key) export PUBLISH_SIGNING_KEY=0000000000000000000000000000000000000000 ;;
+  esac
+  reject
+  absent
+  [[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Failed import leaked key material'
+  pass "invalid imported key configuration prevents publication and cleans its keyring: $invalid"
+done
+
+imported_key_fixture
+PUBLISH_GPG_PRIVATE_KEY=$(cat "$suite/signing-key.asc" "$suite/protected-key.asc")
+reject
+absent
+[[ $(cat "$root/log") == *'Select exactly one imported secret key'* ]] || fail 'Expected ambiguous key rejection'
+export PUBLISH_SIGNING_KEY="$fingerprint"
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+remote verify-commit --raw "$commit" > "$root/verify-commit" 2>&1
+[[ $(cat "$root/verify-commit") == *"VALIDSIG $fingerprint "* ]] || fail 'Wrong explicitly selected key'
+pass 'multiple imported secret keys require explicit selection and use the selected key'
+
+imported_key_fixture
+PUBLISH_SIGN_COMMIT=false
+PUBLISH_SIGN_TAG=false
+reject
+absent
+pass 'private key import requires explicit signing options'
+
+fixture
+export PUBLISH_SIGN_TAG=true PUBLISH_SIGNING_KEY="$fingerprint" PUBLISH_GPG_PASSPHRASE=passphrase
+reject
+absent
+pass 'a passphrase cannot be supplied without a private key import'
+
+imported_key_fixture
+export PUBLISH_GPG_PASSPHRASE=$'invalid\npassphrase'
+reject
+absent
+pass 'multiline GPG passphrases are rejected before importing keys'
+
+imported_key_fixture
+cat > "$root/remote.git/hooks/pre-receive" <<'HOOK'
+#!/usr/bin/env bash
+exit 1
+HOOK
+chmod +x "$root/remote.git/hooks/pre-receive"
+reject
+absent
+[[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Rejected push leaked imported keys'
+pass 'push rejection cleans the imported private keyring'
+
+release_fixture
+export PUBLISH_SIGN_TAG=true PUBLISH_GPG_PRIVATE_KEY
+PUBLISH_GPG_PRIVATE_KEY=$(cat "$suite/signing-key.asc")
+MOCK_MODE=create-failure
+reject
+remote show-ref --verify --quiet refs/tags/v1.2.3 || fail 'Published signed tag was removed'
+[[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Release failure leaked imported keys'
+pass 'Release creation failure cleans imported keys while retaining the published tag'
 
 printf 'Passed %s integration scenarios.\n' "$cases"

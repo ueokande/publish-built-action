@@ -11,6 +11,9 @@ fail() {
 
 cleanup() {
   if [[ -n $temp_dir ]]; then
+    if [[ -d $temp_dir/gnupg ]]; then
+      gpgconf --homedir "$temp_dir/gnupg" --kill all > /dev/null 2>&1 || true
+    fi
     rm -rf -- "$temp_dir"
   fi
 }
@@ -109,7 +112,15 @@ validate_signing() {
   validate_boolean sign-commit "$sign_commit"
   validate_boolean sign-tag "$sign_tag"
   if [[ $sign_commit == true || $sign_tag == true ]]; then
-    [[ -n $signing_key ]] || fail 'signing-key is required when signing is enabled.'
+    [[ -n $signing_key || -n $gpg_private_key ]] || fail 'signing-key or gpg-private-key is required when signing is enabled.'
+  elif [[ -n $gpg_private_key || -n $gpg_passphrase ]]; then
+    fail 'GPG key import requires sign-commit or sign-tag.'
+  fi
+  [[ -z $gpg_passphrase || -n $gpg_private_key ]] || fail 'gpg-passphrase requires gpg-private-key.'
+  [[ $gpg_passphrase != *$'\n'* && $gpg_passphrase != *$'\r'* ]] || fail 'gpg-passphrase must be a single line.'
+  if [[ -n $gpg_private_key ]]; then
+    command -v gpg > /dev/null || fail 'GnuPG is required for key import.'
+    command -v gpgconf > /dev/null || fail 'gpgconf is required for key cleanup.'
   fi
 }
 
@@ -167,12 +178,47 @@ ensure_tag_available() {
   fi
 }
 
+import_signing_key() {
+  local key_listing fingerprints=()
+  mkdir -m 700 "$temp_dir/gnupg"
+  export GNUPGHOME="$temp_dir/gnupg"
+  if ! printf '%s' "$gpg_private_key" | gpg --batch --import > "$temp_dir/import.log" 2>&1; then
+    fail 'Could not import gpg-private-key.'
+  fi
+
+  local selector=()
+  if [[ -n $signing_key ]]; then selector=(-- "$signing_key"); fi
+  if ! key_listing=$(gpg --batch --with-colons --list-secret-keys "${selector[@]}" 2> "$temp_dir/key-list.log"); then
+    fail 'Could not find signing-key among the imported secret keys.'
+  fi
+  mapfile -t fingerprints < <(awk -F: '
+    $1 == "sec" { primary = 1; next }
+    primary && $1 == "fpr" { print $10; primary = 0 }
+  ' <<< "$key_listing")
+  (( ${#fingerprints[@]} == 1 )) || fail 'Select exactly one imported secret key with signing-key.'
+  if [[ -z $signing_key ]]; then signing_key=${fingerprints[0]}; fi
+
+  printf '%s' "$gpg_passphrase" > "$temp_dir/passphrase"
+  chmod 600 "$temp_dir/passphrase"
+  export PUBLISH_GPG_PASSPHRASE_FILE="$temp_dir/passphrase"
+  cat > "$temp_dir/gpg-sign" <<'GPG'
+#!/usr/bin/env bash
+exec gpg --batch --pinentry-mode loopback --passphrase-file "$PUBLISH_GPG_PASSPHRASE_FILE" "$@"
+GPG
+  chmod 700 "$temp_dir/gpg-sign"
+  signing_config=(-c gpg.format=openpgp -c "gpg.openpgp.program=$temp_dir/gpg-sign")
+}
+
 prepare_signing() {
   local gpg_program
   if [[ $sign_commit == true || $sign_tag == true ]]; then
-    # Preserve the caller's OpenPGP program in the disposable tag repository.
-    gpg_program=$(git config --get gpg.openpgp.program || git config --get gpg.program || printf gpg)
-    signing_config=(-c gpg.format=openpgp -c "gpg.openpgp.program=$gpg_program")
+    if [[ -n $gpg_private_key ]]; then
+      import_signing_key
+    else
+      # Preserve the caller's OpenPGP program when using its existing keyring.
+      gpg_program=$(git config --get gpg.openpgp.program || git config --get gpg.program || printf gpg)
+      signing_config=(-c gpg.format=openpgp -c "gpg.openpgp.program=$gpg_program")
+    fi
   fi
   if [[ $sign_commit == true ]]; then commit_signing=("-S$signing_key"); fi
   if [[ $sign_tag == true ]]; then tag_signing=(--sign --local-user "$signing_key"); fi
@@ -181,6 +227,8 @@ prepare_signing() {
 prepare_workspace() {
   temp_dir=$(mktemp -d "$temp_base/publish-built-action.XXXXXX")
   trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   export GIT_INDEX_FILE="$temp_dir/index"
   export GIT_AUTHOR_NAME="$author_name" GIT_AUTHOR_EMAIL="$author_email"
   export GIT_COMMITTER_NAME="$author_name" GIT_COMMITTER_EMAIL="$author_email"
@@ -266,6 +314,7 @@ main() {
   local stable_version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
   local sign_commit=${PUBLISH_SIGN_COMMIT:-false} sign_tag=${PUBLISH_SIGN_TAG:-false}
   local signing_key=${PUBLISH_SIGNING_KEY:-}
+  local gpg_private_key=${PUBLISH_GPG_PRIVATE_KEY:-} gpg_passphrase=${PUBLISH_GPG_PASSPHRASE:-}
   local author_name=${PUBLISH_AUTHOR_NAME:-github-actions[bot]}
   local author_email=${PUBLISH_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}
   local create_release=${PUBLISH_CREATE_RELEASE:-false}
@@ -284,8 +333,8 @@ main() {
   # or command substitutions that could mask a failed preparation command.
   validate_inputs
   ensure_tag_available
-  prepare_signing
   prepare_workspace
+  prepare_signing
   fetch_source_notes
   create_distribution_commit
   create_distribution_tags

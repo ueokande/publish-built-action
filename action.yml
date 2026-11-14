@@ -14,13 +14,19 @@ inputs:
     description: Repository root containing the caller's source checkout and built files.
     default: .
   sign-commit:
-    description: GPG-sign the distribution commit with signing-key. Must be true or false.
+    description: GPG-sign the distribution commit using the configured or imported key. Must be true or false.
     default: 'false'
   sign-tag:
-    description: GPG-sign the annotated release tag with signing-key. Must be true or false.
+    description: GPG-sign the annotated release tag using the configured or imported key. Must be true or false.
     default: 'false'
+  gpg-private-key:
+    description: ASCII-armored OpenPGP private key to import into an isolated temporary keyring. Requires signing to be enabled.
+    default: ''
+  gpg-passphrase:
+    description: Optional single-line passphrase for gpg-private-key. Stored only in the temporary signing directory.
+    default: ''
   signing-key:
-    description: Imported OpenPGP signing key fingerprint. Required when sign-commit or sign-tag is true.
+    description: OpenPGP signing key fingerprint. Optional with gpg-private-key containing one secret key; otherwise required when signing.
     default: ''
   author-name:
     description: Name used for the commit author, committer and tagger.
@@ -69,6 +75,8 @@ runs:
         PUBLISH_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         PUBLISH_SIGN_COMMIT: ${{ inputs.sign-commit }}
         PUBLISH_SIGN_TAG: ${{ inputs.sign-tag }}
+        PUBLISH_GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        PUBLISH_GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
         PUBLISH_SIGNING_KEY: ${{ inputs.signing-key }}
         PUBLISH_AUTHOR_NAME: ${{ inputs.author-name }}
         PUBLISH_AUTHOR_EMAIL: ${{ inputs.author-email }}
