@@ -12,7 +12,7 @@ contents, so select distribution directories rather than source directories.
 Each tag targets a new parentless root commit on a disposable orphan branch.
 `git log` at that tag contains one release commit, with no source or previous
 release history. The source SHA is recorded in the commit message, tag annotation
-and `source` output. The bot identity is `github-actions[bot]`, with email
+and `source` output. The default identity is `github-actions[bot]`, with email
 `41898282+github-actions[bot]@users.noreply.github.com`.
 
 Only the tag is pushed. The caller's branch, HEAD, index, local tags and Git

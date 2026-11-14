@@ -76,6 +76,11 @@ artifact transfer, npm publication and floating tag updates remain with the call
 | `tag` | Required | New immutable distribution tag, such as `v1.2.3`. |
 | `paths` | Required | Newline-separated literal distribution paths, relative to the checkout root. Include `action.yml`, documentation and other required files explicitly. |
 | `working-directory` | `.` | Source checkout root. |
+| `sign-commit` | `false` | GPG-sign the distribution commit. |
+| `sign-tag` | `false` | GPG-sign the annotated tag. |
+| `signing-key` | Empty | Imported OpenPGP key fingerprint; required when signing. |
+| `author-name` | `github-actions[bot]` | Commit author, committer and tagger name. |
+| `author-email` | Bot email | Commit author, committer and tagger email; see [signing](docs/signing.md). |
 | `create-release` | `false` | Create a GitHub Release after pushing the tag. |
 | `copy-release-notes-from` | Empty | Copy this source Release body. Requires `create-release: true`; must differ from `tag`. |
 | `generate-release-notes` | `false` | Generate notes using GitHub. Requires `create-release: true`. |
@@ -105,6 +110,12 @@ accept only `true` or `false`. See [note examples](docs/reference.md#release-beh
 Do not rerun this action or the publishing job; the existing tag will be rejected.
 See [recovery commands](docs/reference.md#recover-a-failed-github-release-step).
 
+## GPG signing
+
+Set `sign-commit: 'true'`, `sign-tag: 'true'`, or both, with `signing-key` set to
+an already imported OpenPGP key fingerprint. Signing failures stop publication
+before the tag push. See [key setup and an example](docs/signing.md).
+
 ## Permissions
 
 The publishing job needs `contents: write` and authenticated Git access to
@@ -131,6 +142,7 @@ Outputs are available after all requested operations succeed.
 - [Separate build and publish jobs using artifacts](docs/examples.md#separate-build-and-publication-jobs)
 - [Use release-please outputs and copy source release notes](docs/examples.md#use-release-please-outputs)
 - [Publication behavior, path rules and recovery](docs/reference.md)
+- [GPG signing and identity setup](docs/signing.md)
 - [Tests and workflow lockfile maintenance](docs/development.md)
 
 The examples use exact action versions. Generate a workflow lockfile in your own

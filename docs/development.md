@@ -2,7 +2,8 @@
 
 [Back to README](../README.md)
 
-Run the existing tests without installing dependencies:
+Run tests with Bash, Git and GnuPG (`gpg` and `gpgconf`), available on the
+supported GitHub-hosted Ubuntu runners:
 
 ```bash
 bash -n scripts/publish.sh tests/integration.sh
@@ -10,7 +11,9 @@ bash tests/integration.sh
 ```
 
 Tests use temporary local bare remotes and a stub GitHub CLI for Release calls;
-they never publish tags or Releases to GitHub. The stub checks body transfer,
+they never publish tags or Releases to GitHub. Signing tests generate an isolated
+ephemeral key, verify commit and tag signatures, and remove the test keyring and
+its GPG agent afterward. The stub checks body transfer,
 operation order and failure recovery without requiring credentials. CI runs
 Bash syntax checks, ShellCheck, integration tests, and an actual composite-action
 smoke test on Ubuntu 22.04 and 24.04, plus actionlint for workflow validation.
