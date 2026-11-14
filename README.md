@@ -17,7 +17,7 @@ files in that checkout. This action:
 
 1. Uses the current `HEAD` as the source commit.
 2. Creates an empty tree and adds only the specified distribution paths,
-   force-adding ignored files, plus root README, CHANGELOG and LICENSE files.
+   force-adding ignored files. No files are added implicitly.
 3. Creates a parentless root commit on a disposable orphan `distribution` branch
    and an annotated tag that records the source SHA as provenance.
 4. Pushes only that tag to `origin`.
@@ -38,11 +38,10 @@ with its repository after the run.
 
 The source branch, `HEAD`, caller's index, local tags, and Git configuration stay
 unchanged. Source code and development files outside `paths` are excluded.
-Only root regular files named `README`, `CHANGELOG`, or `LICENSE`, optionally
-followed by a dot extension (case-insensitive, for example `README.md`), are
-retained automatically from source `HEAD`. Uncommitted documentation changes
-are excluded unless the file is also explicitly selected in `paths`. Missing
-documentation is skipped; no license or other file is invented.
+README, CHANGELOG, LICENSE, action metadata and any other required files must all
+be listed explicitly in `paths`. There are no automatically included filenames.
+All selected files come from the working tree, including documentation edits.
+A missing selected file is an error; no license or other file is invented.
 
 Files in `paths` come from the working tree, preserving their relative paths.
 Include all files needed to consume the action, such as `action.yml` and `dist`.
@@ -69,7 +68,7 @@ it creates a normal published Release. It never edits an existing Release.
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `tag` | Yes | — | New tag name, for example `v1.2.3`. Must be a valid Git tag ref. |
-| `paths` | Yes | — | Newline-separated literal distribution paths relative to the source repository root, including required action metadata. Root documentation is retained automatically. |
+| `paths` | Yes | — | Newline-separated literal distribution paths relative to the source repository root, including action metadata and any desired README, CHANGELOG and LICENSE files. |
 | `working-directory` | No | `.` | Source repository root; useful for checkouts in a subdirectory. |
 | `create-release` | No | `false` | Create a GitHub Release after the tag push. Accepts only `true` or `false`. |
 | `copy-release-notes` | No | `false` | Copy the source Release body instead of generating notes. Requires `create-release: true`. |
@@ -96,6 +95,9 @@ with:
   paths: |
     action.yml
     dist
+    README.md
+    CHANGELOG.md
+    LICENSE
   create-release: 'true'
   copy-release-notes: 'false'
 ```
@@ -160,8 +162,9 @@ with `gh actions-lock` to lock the actions they use. This repository's lockfile
 does not automatically cover workflows in your repository.
 
 This example assumes the caller has `action.yml`, `package-lock.json`, `npm test`,
-and `npm run build` producing `dist`. The published tree contains `action.yml`,
-`dist`, and any root README, CHANGELOG and LICENSE files; TypeScript sources and
+and `npm run build` producing `dist`, plus the documentation files listed below.
+Remove or adjust documentation paths to match your repository. The published tree contains `action.yml`,
+`dist`, `README.md`, `CHANGELOG.md` and `LICENSE`, all selected explicitly; TypeScript sources and
 package manifests are excluded.
 
 ```yaml
@@ -201,6 +204,9 @@ jobs:
           paths: |
             action.yml
             dist
+            README.md
+            CHANGELOG.md
+            LICENSE
 ```
 
 ## Separate build and publication jobs
@@ -271,6 +277,9 @@ jobs:
           paths: |
             action.yml
             dist
+            README.md
+            CHANGELOG.md
+            LICENSE
 ```
 
 ## Use release-please outputs
@@ -357,6 +366,9 @@ jobs:
           paths: |
             action.yml
             dist
+            README.md
+            CHANGELOG.md
+            LICENSE
           create-release: 'true'
           copy-release-notes: 'true'
           source-release-tag: ${{ needs.release.outputs.source_tag }}

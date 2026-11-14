@@ -65,15 +65,6 @@ if [[ $copy_notes == true ]]; then
 fi
 export GIT_INDEX_FILE="$temp_dir/index"
 git read-tree --empty
-# Retain only root documentation from the source commit, not working-tree edits.
-while IFS= read -r -d '' entry; do
-  name=${entry#*$'\t'}
-  if [[ ( $entry == '100644 blob '* || $entry == '100755 blob '* ) &&
-    ${name,,} =~ ^(readme|changelog|license)(\.[^/]*)?$ ]]; then
-    printf '%s\0' "$entry"
-  fi
-done < <(git ls-tree -z "$source_sha") > "$temp_dir/documentation.index"
-git update-index -z --index-info < "$temp_dir/documentation.index"
 git add --force -- "${paths[@]}"
 tree=$(git write-tree)
 

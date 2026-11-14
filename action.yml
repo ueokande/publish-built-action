@@ -5,7 +5,7 @@ inputs:
     description: New release tag name. Existing local or remote tags are rejected.
     required: true
   paths:
-    description: Newline-separated literal distribution paths, including required action metadata. Root README, CHANGELOG and LICENSE files are retained automatically.
+    description: Newline-separated literal distribution paths. Explicitly include all required files, including action metadata, README, CHANGELOG and LICENSE.
     required: true
   working-directory:
     description: Repository root containing the caller's source checkout and built files.

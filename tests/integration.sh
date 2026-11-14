@@ -105,10 +105,7 @@ eq "$(remote rev-parse 'refs/tags/v1.2.3^{}')" "$commit"
 eq "$(remote rev-list --parents -n 1 "$commit")" "$commit"
 eq "$(remote rev-list --count "$commit")" 1
 eq "$(remote show "$commit:dist/index.js")" built
-eq "$(remote ls-tree -r --name-only "$commit")" $'CHANGELOG.md\nLICENSE\nREADME.md\ndist/index.js'
-eq "$(remote show "$commit:README.md")" readme
-eq "$(remote show "$commit:CHANGELOG.md")" changelog
-eq "$(remote show "$commit:LICENSE")" license
+eq "$(remote ls-tree -r --name-only "$commit")" dist/index.js
 if remote cat-file -e "$commit:unrelated.txt" 2>/dev/null; then fail 'Included unrelated staged file'; fi
 eq "$(remote for-each-ref --format='%(refname)' refs/tags)" refs/tags/v1.2.3
 eq "$(remote rev-parse refs/heads/main)" "$source_sha"
@@ -121,7 +118,7 @@ eq "$(sed -n 's/^source=//p' "$GITHUB_OUTPUT")" "$source_sha"
 eq "$(sed -n 's/^tag=//p' "$GITHUB_OUTPUT")" v1.2.3
 eq "$(remote show -s --format=%an "$commit")" 'github-actions[bot]'
 [[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Temporary index leaked'
-pass 'annotated tag, ignored build, orphan history, documentation, outputs, identity and caller state'
+pass 'annotated tag, ignored build, orphan history, explicit contents, outputs, identity and caller state'
 
 : > "$GITHUB_OUTPUT"
 old_tag=$(remote rev-parse refs/tags/v1.2.3)
@@ -365,7 +362,7 @@ PUBLISH_PATHS=$'action.yml\ndist'
 publish
 commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
 eq "$(remote show "$commit:action.yml")" 'name: Distribution'
-eq "$(remote ls-tree -r --name-only "$commit")" $'CHANGELOG.md\nLICENSE\nREADME.md\naction.yml\ndist/index.js'
+eq "$(remote ls-tree -r --name-only "$commit")" $'action.yml\ndist/index.js'
 # A fresh clone of the tag must contain only the isolated distribution history.
 git clone -q --branch "$PUBLISH_TAG" "file://$root/remote.git" "$root/distribution" 2> "$root/clone-log"
 eq "$(git -C "$root/distribution" rev-list --count HEAD)" 1
@@ -373,17 +370,20 @@ eq "$(git -C "$root/distribution" rev-list --count HEAD)" 1
 pass 'explicit action metadata and fresh tag clone contain only distribution files'
 
 fixture
-git mv README.md README
-git mv CHANGELOG.md changelog.rst
-git mv LICENSE license.txt
-mkdir docs
-printf 'nested documentation\n' > docs/README.md
-git add docs
-git commit -qm 'docs: use alternative documentation names'
-source_sha=$(git rev-parse HEAD)
+printf 'working readme\n' > README.md
+PUBLISH_PATHS=$'dist\nREADME.md\nCHANGELOG.md\nLICENSE'
 publish
 commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
-eq "$(remote ls-tree -r --name-only "$commit")" $'README\nchangelog.rst\ndist/index.js\nlicense.txt'
-pass 'root documentation names support case and extensions without retaining nested docs'
+eq "$(remote ls-tree -r --name-only "$commit")" $'CHANGELOG.md\nLICENSE\nREADME.md\ndist/index.js'
+eq "$(remote show "$commit:README.md")" 'working readme'
+eq "$(remote show "$commit:CHANGELOG.md")" changelog
+eq "$(remote show "$commit:LICENSE")" license
+pass 'explicit documentation paths include their working-tree contents'
+
+fixture
+PUBLISH_PATHS=$'dist\nMISSING-LICENSE'
+reject
+absent
+pass 'missing explicitly selected documentation is an error'
 
 printf 'Passed %s integration scenarios.\n' "$cases"
