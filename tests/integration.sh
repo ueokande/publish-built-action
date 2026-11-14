@@ -40,8 +40,8 @@ fixture() {
   export PUBLISH_TAG=v1.2.3 PUBLISH_PATHS=dist PUBLISH_WORKING_DIRECTORY="$PWD"
   export GITHUB_OUTPUT="$root/outputs" RUNNER_TEMP="$root"
   : > "$GITHUB_OUTPUT"
-  unset PUBLISH_SOURCE_RELEASE_TAG PUBLISH_RELEASE_REPOSITORY
-  export PUBLISH_CREATE_RELEASE=false PUBLISH_COPY_RELEASE_NOTES=false
+  unset PUBLISH_COPY_RELEASE_NOTES_FROM PUBLISH_RELEASE_REPOSITORY
+  export PUBLISH_CREATE_RELEASE=false
   export MOCK_MODE=disabled MOCK_ROOT="$root"
   mkdir "$root/bin"
   cat > "$root/bin/gh" <<'MOCK'
@@ -57,7 +57,7 @@ case "$1 $2" in
     cat "$MOCK_ROOT/notes"
     ;;
   'release create')
-    if [[ $PUBLISH_COPY_RELEASE_NOTES == true ]]; then
+    if [[ -n ${PUBLISH_COPY_RELEASE_NOTES_FROM:-} ]]; then
       [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --notes-file '*' -- v1.2.3' ]]
       cmp -- "$MOCK_ROOT/notes" "${9}"
     else
@@ -242,8 +242,8 @@ pass 'missing output binding fails before publication'
 
 release_fixture() {
   fixture
-  export PUBLISH_CREATE_RELEASE=true PUBLISH_COPY_RELEASE_NOTES=true
-  export PUBLISH_SOURCE_RELEASE_TAG=source-v1.2.3
+  export PUBLISH_CREATE_RELEASE=true
+  export PUBLISH_COPY_RELEASE_NOTES_FROM=source-v1.2.3
   export PUBLISH_RELEASE_REPOSITORY=owner/project
   export MOCK_MODE=success
   # Keep inherited credentials out of the stub: only presence is needed here.
@@ -285,13 +285,13 @@ absent
 pass 'missing Release token fails before push'
 
 release_fixture
-PUBLISH_SOURCE_RELEASE_TAG=$PUBLISH_TAG
+PUBLISH_COPY_RELEASE_NOTES_FROM=$PUBLISH_TAG
 reject
 absent
 pass 'source and distribution Release tags must differ'
 
 release_fixture
-PUBLISH_SOURCE_RELEASE_TAG='bad tag'
+PUBLISH_COPY_RELEASE_NOTES_FROM='bad tag'
 reject
 absent
 pass 'invalid source Release tag is rejected before push'
@@ -308,8 +308,7 @@ eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
 pass 'rejected tag push never attempts Release creation'
 
 release_fixture
-PUBLISH_COPY_RELEASE_NOTES=false
-unset PUBLISH_SOURCE_RELEASE_TAG
+unset PUBLISH_COPY_RELEASE_NOTES_FROM
 publish
 eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
 eq "$(sed -n 's/^release-url=//p' "$GITHUB_OUTPUT")" 'https://github.com/owner/project/releases/tag/v1.2.3'
@@ -322,29 +321,11 @@ absent
 [[ ! -e $root/gh-calls ]] || fail 'Invalid options called GitHub CLI'
 pass 'copying without Release creation is rejected before publication'
 
-release_fixture
-unset PUBLISH_SOURCE_RELEASE_TAG
-reject
-absent
-pass 'copying requires a source Release tag'
-
-release_fixture
-PUBLISH_COPY_RELEASE_NOTES=false
-reject
-absent
-pass 'source Release tag without copying is rejected'
-
 fixture
 PUBLISH_CREATE_RELEASE=yes
 reject
 absent
 pass 'invalid create-release boolean is rejected'
-
-fixture
-PUBLISH_COPY_RELEASE_NOTES=yes
-reject
-absent
-pass 'invalid copy-release-notes boolean is rejected'
 
 fixture
 # Documentation is optional and never synthesized, including the license.

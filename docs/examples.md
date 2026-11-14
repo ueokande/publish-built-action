@@ -169,7 +169,6 @@ jobs:
             CHANGELOG.md
             LICENSE
           create-release: 'true'
-          copy-release-notes: 'true'
-          source-release-tag: ${{ needs.release.outputs.source_tag }}
+          copy-release-notes-from: ${{ needs.release.outputs.source_tag }}
 ```
 

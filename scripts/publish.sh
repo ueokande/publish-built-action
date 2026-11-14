@@ -43,21 +43,17 @@ done <<< "${PUBLISH_PATHS:-}"
 temp_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-built-action.XXXXXX")
 trap 'rm -rf -- "$temp_dir"' EXIT
 create_release=${PUBLISH_CREATE_RELEASE:-false}
-copy_notes=${PUBLISH_COPY_RELEASE_NOTES:-false}
-source_release=${PUBLISH_SOURCE_RELEASE_TAG:-}
+source_release=${PUBLISH_COPY_RELEASE_NOTES_FROM:-}
 release_url=''
 [[ $create_release == true || $create_release == false ]] || fail 'create-release must be true or false.'
-[[ $copy_notes == true || $copy_notes == false ]] || fail 'copy-release-notes must be true or false.'
-[[ $copy_notes == false || $create_release == true ]] || fail 'copy-release-notes requires create-release.'
-[[ -z $source_release || $copy_notes == true ]] || fail 'source-release-tag requires copy-release-notes.'
+[[ -z $source_release || $create_release == true ]] || fail 'copy-release-notes-from requires create-release.'
 if [[ $create_release == true ]]; then
   [[ -n ${GH_TOKEN:-} ]] || fail 'A token is required for Release creation.'
   [[ -n ${PUBLISH_RELEASE_REPOSITORY:-} ]] || fail 'release-repository is required for Release creation.'
   command -v gh > /dev/null || fail 'GitHub CLI is required for Release creation.'
 fi
-if [[ $copy_notes == true ]]; then
-  [[ -n $source_release ]] || fail 'source-release-tag is required to copy Release notes.'
-  git check-ref-format "refs/tags/$source_release" || fail 'Invalid source-release-tag.'
+if [[ -n $source_release ]]; then
+  git check-ref-format "refs/tags/$source_release" || fail 'Invalid copy-release-notes-from.'
   [[ $source_release != "$tag" ]] || fail 'Source and distribution tags must differ.'
   # Fetch before publishing so a missing source Release cannot leave a new tag.
   gh release view --repo "$PUBLISH_RELEASE_REPOSITORY" \
@@ -94,7 +90,7 @@ git -c push.followTags=false push --no-follow-tags \
 
 if [[ $create_release == true ]]; then
   notes_args=(--generate-notes)
-  if [[ $copy_notes == true ]]; then
+  if [[ -n $source_release ]]; then
     notes_args=(--notes-file "$temp_dir/release-notes.md")
   fi
   if ! release_url=$(gh release create --repo "$PUBLISH_RELEASE_REPOSITORY" \

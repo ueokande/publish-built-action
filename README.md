@@ -77,8 +77,7 @@ artifact transfer, npm publication and floating tag updates remain with the call
 | `paths` | Required | Newline-separated literal distribution paths, relative to the checkout root. Include `action.yml`, documentation and other required files explicitly. |
 | `working-directory` | `.` | Source checkout root. |
 | `create-release` | `false` | Create a GitHub Release after pushing the tag. |
-| `copy-release-notes` | `false` | Copy the source Release body instead of generating notes. Requires `create-release: true`. |
-| `source-release-tag` | Empty | Required only when copying notes; must differ from `tag`. |
+| `copy-release-notes-from` | Empty | Copy this source Release body instead of generating notes. Requires `create-release: true`; must differ from `tag`. |
 | `release-repository` | `${{ github.repository }}` | Repository for Releases; must match `origin`. |
 | `token` | `${{ github.token }}` | API token for optional Release operations. Does not configure Git authentication. |
 
@@ -87,14 +86,14 @@ See [path rules](docs/reference.md#path-rules) for details.
 
 ## GitHub Releases
 
-| `create-release` | `copy-release-notes` | Result |
+| `create-release` | `copy-release-notes-from` | Result |
 | --- | --- | --- |
-| `false` | `false` | Tag only (default). |
-| `true` | `false` | Release with GitHub-generated notes. |
-| `true` | `true` | Release with the body from `source-release-tag`. |
+| `false` | Empty | Tag only (default). |
+| `true` | Empty | Release with GitHub-generated notes. |
+| `true` | Source tag | Release with the body from that source Release. |
 
-Both flags accept only `true` or `false`. Copying without Release creation is an
-error. Omit `source-release-tag` when not copying notes.
+`create-release` accepts only `true` or `false`. Setting `copy-release-notes-from`
+without enabling Release creation is an error. Leave it empty to generate notes.
 
 **If Release creation fails after the tag push, retry only Release creation.**
 Do not rerun this action or the publishing job; the existing tag will be rejected.
