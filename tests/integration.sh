@@ -3,7 +3,11 @@ set -euo pipefail
 
 script=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/scripts/publish.sh
 suite=$(mktemp -d)
-trap 'rm -rf -- "$suite"' EXIT
+cleanup() {
+  if [[ -d $suite/gnupg ]]; then gpgconf --homedir "$suite/gnupg" --kill gpg-agent; fi
+  rm -rf -- "$suite"
+}
+trap cleanup EXIT
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_TERMINAL_PROMPT=0
@@ -42,6 +46,8 @@ fixture() {
   : > "$GITHUB_OUTPUT"
   unset PUBLISH_COPY_RELEASE_NOTES_FROM PUBLISH_RELEASE_REPOSITORY PUBLISH_RELEASE_NOTES
   export PUBLISH_GENERATE_RELEASE_NOTES=false
+  unset PUBLISH_SIGNING_KEY PUBLISH_AUTHOR_NAME PUBLISH_AUTHOR_EMAIL
+  export PUBLISH_SIGN_COMMIT=false PUBLISH_SIGN_TAG=false
   export PUBLISH_CREATE_RELEASE=false
   export MOCK_MODE=disabled MOCK_ROOT="$root"
   mkdir "$root/bin"
@@ -422,5 +428,94 @@ PUBLISH_GENERATE_RELEASE_NOTES=yes
 reject
 absent
 pass 'invalid generate-release-notes boolean is rejected'
+
+# Use a throwaway, unprotected key only inside this isolated test directory.
+export GNUPGHOME="$suite/gnupg"
+mkdir -m 700 "$GNUPGHOME"
+gpg --batch --pinentry-mode loopback --passphrase '' \
+  --quick-generate-key 'Signing Test <signing@example.com>' ed25519 sign 0 > "$suite/keygen.log" 2>&1
+fingerprint=$(gpg --batch --with-colons --list-secret-keys 2> /dev/null | awk -F: '$1 == "fpr" {print $10; exit}')
+[[ -n $fingerprint ]] || fail 'Test signing key was not created'
+
+for mode in commit tag both; do
+  fixture
+  export PUBLISH_SIGNING_KEY="$fingerprint"
+  export PUBLISH_AUTHOR_NAME='Signing Test' PUBLISH_AUTHOR_EMAIL=signing@example.com
+  if [[ $mode != tag ]]; then PUBLISH_SIGN_COMMIT=true; fi
+  if [[ $mode != commit ]]; then PUBLISH_SIGN_TAG=true; fi
+  before_config=$(git config --local --list)
+  publish
+  commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+  if [[ $mode != tag ]]; then
+    remote verify-commit --raw "$commit" > "$root/verify-commit" 2>&1
+    [[ $(cat "$root/verify-commit") == *"VALIDSIG $fingerprint "* ]] || fail 'Unexpected commit signing key'
+  elif remote cat-file commit "$commit" | grep -q '^gpgsig '; then
+    fail 'Unexpected commit signature'
+  fi
+  if [[ $mode != commit ]]; then
+    remote verify-tag --raw "refs/tags/$PUBLISH_TAG" > "$root/verify-tag" 2>&1
+    [[ $(cat "$root/verify-tag") == *"VALIDSIG $fingerprint "* ]] || fail 'Unexpected tag signing key'
+  elif remote cat-file tag "refs/tags/$PUBLISH_TAG" | grep -q 'BEGIN PGP SIGNATURE'; then
+    fail 'Unexpected tag signature'
+  fi
+  eq "$(remote show -s --format=%ae "$commit")" signing@example.com
+  eq "$(git config --local --list)" "$before_config"
+  eq "$(git rev-parse HEAD)" "$source_sha"
+  eq "$(git for-each-ref --format='%(refname)' refs/tags)" ''
+  eq "$(remote rev-list --count "$commit")" 1
+  pass "GPG signatures verify with independent signing scope: $mode"
+done
+
+for mode in commit tag; do
+  fixture
+  if [[ $mode == commit ]]; then PUBLISH_SIGN_COMMIT=true; else PUBLISH_SIGN_TAG=true; fi
+  reject
+  absent
+  pass "$mode signing requires an explicit signing key"
+
+  export PUBLISH_SIGNING_KEY=0000000000000000000000000000000000000000
+  reject
+  absent
+  eq "$(git rev-parse HEAD)" "$source_sha"
+  eq "$(git for-each-ref --format='%(refname)' refs/tags)" ''
+  pass "unavailable $mode signing key fails without publishing a tag"
+done
+
+for mode in commit tag; do
+  fixture
+  if [[ $mode == commit ]]; then PUBLISH_SIGN_COMMIT=yes; else PUBLISH_SIGN_TAG=yes; fi
+  reject
+  absent
+  pass "invalid sign-$mode boolean is rejected"
+done
+
+fixture
+export PUBLISH_SIGN_COMMIT=true PUBLISH_SIGN_TAG=true PUBLISH_SIGNING_KEY="$fingerprint"
+cat > "$root/gpg-wrapper" <<'GPG'
+#!/usr/bin/env bash
+printf 'called\n' >> "$MOCK_ROOT/gpg-calls"
+exec gpg "$@"
+GPG
+chmod +x "$root/gpg-wrapper"
+git config gpg.openpgp.program "$root/gpg-wrapper"
+git config gpg.format ssh
+before_config=$(git config --local --list)
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+remote verify-commit "$commit" > "$root/verify-commit" 2>&1
+remote verify-tag "refs/tags/$PUBLISH_TAG" > "$root/verify-tag" 2>&1
+eq "$(wc -l < "$root/gpg-calls" | tr -d ' ')" 2
+eq "$(git config --local --list)" "$before_config"
+pass 'caller OpenPGP program works for commit and isolated tag without changing config'
+
+fixture
+git config commit.gpgSign true
+git config tag.gpgSign true
+git config gpg.program "$root/nonexistent-gpg"
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+if remote cat-file commit "$commit" | grep -q '^gpgsig '; then fail 'Unexpected default commit signature'; fi
+if remote cat-file tag "refs/tags/$PUBLISH_TAG" | grep -q 'BEGIN PGP SIGNATURE'; then fail 'Unexpected default tag signature'; fi
+pass 'signing stays opt-in despite caller automatic signing configuration'
 
 printf 'Passed %s integration scenarios.\n' "$cases"

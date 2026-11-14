@@ -42,6 +42,22 @@ done <<< "${PUBLISH_PATHS:-}"
 # Build an isolated distribution tree without inheriting source files or history.
 temp_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-built-action.XXXXXX")
 trap 'rm -rf -- "$temp_dir"' EXIT
+sign_commit=${PUBLISH_SIGN_COMMIT:-false}
+sign_tag=${PUBLISH_SIGN_TAG:-false}
+signing_key=${PUBLISH_SIGNING_KEY:-}
+[[ $sign_commit == true || $sign_commit == false ]] || fail 'sign-commit must be true or false.'
+[[ $sign_tag == true || $sign_tag == false ]] || fail 'sign-tag must be true or false.'
+signing_config=()
+commit_signing=()
+tag_signing=(--no-sign)
+if [[ $sign_commit == true || $sign_tag == true ]]; then
+  [[ -n $signing_key ]] || fail 'signing-key is required when signing is enabled.'
+  # Capture the caller's OpenPGP program for use in the disposable tag repository.
+  gpg_program=$(git config --get gpg.openpgp.program || git config --get gpg.program || printf gpg)
+  signing_config=(-c gpg.format=openpgp -c "gpg.openpgp.program=$gpg_program")
+fi
+if [[ $sign_commit == true ]]; then commit_signing=("-S$signing_key"); fi
+if [[ $sign_tag == true ]]; then tag_signing=(--sign --local-user "$signing_key"); fi
 create_release=${PUBLISH_CREATE_RELEASE:-false}
 source_release=${PUBLISH_COPY_RELEASE_NOTES_FROM:-}
 generate_notes=${PUBLISH_GENERATE_RELEASE_NOTES:-false}
@@ -73,11 +89,11 @@ git add --force -- "${paths[@]}"
 tree=$(git write-tree)
 
 # Use command-scoped identity and plumbing; do not change HEAD, config or local refs.
-export GIT_AUTHOR_NAME='github-actions[bot]'
-export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+export GIT_AUTHOR_NAME="${PUBLISH_AUTHOR_NAME:-github-actions[bot]}"
+export GIT_AUTHOR_EMAIL="${PUBLISH_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
 export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
-commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" | git commit-tree "$tree")
+commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" | git "${signing_config[@]}" -c commit.gpgSign=false commit-tree "$tree" "${commit_signing[@]}")
 # Keep the tag ref in a disposable repository while sharing the object database.
 object_directory=$(git rev-parse --path-format=absolute --git-path objects)
 object_format=$(git rev-parse --show-object-format)
@@ -86,7 +102,7 @@ tag_object=$(
   export GIT_OBJECT_DIRECTORY="$object_directory"
   # The disposable branch starts with an orphan root commit.
   git --git-dir="$temp_dir/tag.git" update-ref refs/heads/distribution "$commit"
-  git --git-dir="$temp_dir/tag.git" tag --annotate --no-sign \
+  git "${signing_config[@]}" --git-dir="$temp_dir/tag.git" tag --annotate "${tag_signing[@]}" \
     --message="Release $tag (source $source_sha)" -- "$tag" "$commit"
   git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref"
 )

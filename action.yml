@@ -10,6 +10,21 @@ inputs:
   working-directory:
     description: Repository root containing the caller's source checkout and built files.
     default: .
+  sign-commit:
+    description: GPG-sign the distribution commit with signing-key. Must be true or false.
+    default: 'false'
+  sign-tag:
+    description: GPG-sign the annotated release tag with signing-key. Must be true or false.
+    default: 'false'
+  signing-key:
+    description: Imported OpenPGP signing key fingerprint. Required when sign-commit or sign-tag is true.
+    default: ''
+  author-name:
+    description: Name used for the commit author, committer and tagger.
+    default: github-actions[bot]
+  author-email:
+    description: Email used for the commit author, committer and tagger. Use an email associated with the signing key for GitHub verification.
+    default: 41898282+github-actions[bot]@users.noreply.github.com
   create-release:
     description: Create a GitHub Release after pushing the distribution tag. Must be true or false.
     default: 'false'
@@ -51,6 +66,11 @@ runs:
         PUBLISH_TAG: ${{ inputs.tag }}
         PUBLISH_PATHS: ${{ inputs.paths }}
         PUBLISH_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PUBLISH_SIGN_COMMIT: ${{ inputs.sign-commit }}
+        PUBLISH_SIGN_TAG: ${{ inputs.sign-tag }}
+        PUBLISH_SIGNING_KEY: ${{ inputs.signing-key }}
+        PUBLISH_AUTHOR_NAME: ${{ inputs.author-name }}
+        PUBLISH_AUTHOR_EMAIL: ${{ inputs.author-email }}
         PUBLISH_CREATE_RELEASE: ${{ inputs.create-release }}
         PUBLISH_COPY_RELEASE_NOTES_FROM: ${{ inputs.copy-release-notes-from }}
         PUBLISH_GENERATE_RELEASE_NOTES: ${{ inputs.generate-release-notes }}
