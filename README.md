@@ -26,7 +26,6 @@ publishes the selected distribution files.
 
 ## Quick start
 
-**The initial release tag `v0.0.1` used below has not been published yet.**
 The example assumes `npm test`, `npm run build`
 producing `dist`, and the files listed in `paths`. Adjust those paths to match your
 repository: **only `paths` are included**, even for ignored files and documentation.

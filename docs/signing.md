@@ -23,8 +23,6 @@ its agent. Store the ASCII-armored private key in the repository secret
 `GPG_PRIVATE_KEY` and its passphrase in `GPG_PASSPHRASE`. Do not store private keys
 or passphrases in the checkout or pass them as this action's inputs.
 
-As in the [quick start](../README.md#quick-start), the example uses the planned
-initial release `v0.0.1`, which has not been published yet.
 Adjust the build commands and explicit distribution paths for your repository.
 Lock the example's dependencies with `gh actions-lock` in your own repository.
 

@@ -4,9 +4,8 @@
 
 These examples build and test a Node.js action before publishing. Adjust the
 scripts and explicit distribution paths for your repository; every selected path
-must exist. The examples use the planned initial release `v0.0.1`, which has
-not been published yet. Generate your own workflow
-lockfile with `gh actions-lock`; this repository's lockfile does not cover callers.
+must exist. Generate your own workflow lockfile with `gh actions-lock`; this
+repository's lockfile does not cover callers.
 
 ## Separate build and publication jobs
 
