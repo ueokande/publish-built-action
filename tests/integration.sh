@@ -518,4 +518,13 @@ if remote cat-file commit "$commit" | grep -q '^gpgsig '; then fail 'Unexpected 
 if remote cat-file tag "refs/tags/$PUBLISH_TAG" | grep -q 'BEGIN PGP SIGNATURE'; then fail 'Unexpected default tag signature'; fi
 pass 'signing stays opt-in despite caller automatic signing configuration'
 
+fixture
+git remote set-url origin "$root/unavailable-remote.git"
+RUNNER_TEMP="$root/unavailable-temp-directory"
+PUBLISH_CREATE_RELEASE=yes
+reject
+[[ $(cat "$root/log") == *'create-release must be true or false.'* ]] || fail 'Local validation did not precede remote access and temporary setup'
+absent
+pass 'invalid configuration is reported before remote lookup or temporary setup'
+
 printf 'Passed %s integration scenarios.\n' "$cases"

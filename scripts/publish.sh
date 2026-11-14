@@ -1,135 +1,206 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The EXIT trap needs this directory after main's local variables go out of scope.
+temp_dir=''
+
 fail() {
   printf 'publish-built-action: %s\n' "$*" >&2
   exit 1
 }
 
-: "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-cd -- "${PUBLISH_WORKING_DIRECTORY:-.}"
-[[ $(git rev-parse --is-inside-work-tree) == true ]] || fail 'A source checkout is required.'
-[[ -z $(git rev-parse --show-prefix) ]] || fail 'working-directory must be the repository root.'
-source_sha=$(git rev-parse --verify 'HEAD^{commit}')
-tag=${PUBLISH_TAG:-}
-[[ -n $tag ]] || fail 'tag is required.'
-git check-ref-format "refs/tags/$tag" || fail 'Invalid tag name.'
-ref="refs/tags/$tag"
-if git show-ref --verify --quiet "$ref"; then
-  fail "Tag already exists locally: $tag"
-fi
+cleanup() {
+  if [[ -n $temp_dir ]]; then
+    rm -rf -- "$temp_dir"
+  fi
+}
 
-# An absent ref returns 2; transport and authentication errors must remain errors.
-if git ls-remote --exit-code --refs origin "$ref" > /dev/null; then
-  fail "Tag already exists on origin: $tag"
-else
-  status=$?
-  [[ $status == 2 ]] || fail "Cannot check origin for the release tag (exit $status)."
-fi
+validate_boolean() {
+  local name=$1 value=$2
+  [[ $value == true || $value == false ]] || fail "$name must be true or false."
+}
 
-paths=()
-while IFS= read -r path || [[ -n $path ]]; do
-  [[ -n $path ]] || continue
-  path=${path%/}
-  [[ -n $path && $path != /* && $path != *$'\r'* ]] || fail 'Paths must be relative and contain no carriage returns.'
-  [[ ! $path =~ (^|/)\.\.?(/|$) ]] || fail 'Paths cannot contain dot or parent components.'
-  [[ ! ${path,,} =~ (^|/)\.git(/|$) ]] || fail 'Paths cannot contain .git components.'
-  [[ -e $path || -L $path ]] || fail "Build path does not exist: $path"
-  paths+=(":(literal)$path")
-done <<< "${PUBLISH_PATHS:-}"
-(( ${#paths[@]} > 0 )) || fail 'At least one build path is required.'
+validate_paths() {
+  local path
+  while IFS= read -r path || [[ -n $path ]]; do
+    [[ -n $path ]] || continue
+    path=${path%/}
+    [[ -n $path && $path != /* && $path != *$'\r'* ]] || fail 'Paths must be relative and contain no carriage returns.'
+    [[ ! $path =~ (^|/)\.\.?(/|$) ]] || fail 'Paths cannot contain dot or parent components.'
+    [[ ! ${path,,} =~ (^|/)\.git(/|$) ]] || fail 'Paths cannot contain .git components.'
+    [[ -e $path || -L $path ]] || fail "Build path does not exist: $path"
+    paths+=(":(literal)$path")
+  done <<< "$paths_input"
+  (( ${#paths[@]} > 0 )) || fail 'At least one build path is required.'
+}
 
-# Build an isolated distribution tree without inheriting source files or history.
-temp_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-built-action.XXXXXX")
-trap 'rm -rf -- "$temp_dir"' EXIT
-sign_commit=${PUBLISH_SIGN_COMMIT:-false}
-sign_tag=${PUBLISH_SIGN_TAG:-false}
-signing_key=${PUBLISH_SIGNING_KEY:-}
-[[ $sign_commit == true || $sign_commit == false ]] || fail 'sign-commit must be true or false.'
-[[ $sign_tag == true || $sign_tag == false ]] || fail 'sign-tag must be true or false.'
-signing_config=()
-commit_signing=()
-tag_signing=(--no-sign)
-if [[ $sign_commit == true || $sign_tag == true ]]; then
-  [[ -n $signing_key ]] || fail 'signing-key is required when signing is enabled.'
-  # Capture the caller's OpenPGP program for use in the disposable tag repository.
-  gpg_program=$(git config --get gpg.openpgp.program || git config --get gpg.program || printf gpg)
-  signing_config=(-c gpg.format=openpgp -c "gpg.openpgp.program=$gpg_program")
-fi
-if [[ $sign_commit == true ]]; then commit_signing=("-S$signing_key"); fi
-if [[ $sign_tag == true ]]; then tag_signing=(--sign --local-user "$signing_key"); fi
-create_release=${PUBLISH_CREATE_RELEASE:-false}
-source_release=${PUBLISH_COPY_RELEASE_NOTES_FROM:-}
-generate_notes=${PUBLISH_GENERATE_RELEASE_NOTES:-false}
-release_notes=${PUBLISH_RELEASE_NOTES:-}
-release_url=''
-[[ $create_release == true || $create_release == false ]] || fail 'create-release must be true or false.'
-[[ $generate_notes == true || $generate_notes == false ]] || fail 'generate-release-notes must be true or false.'
-notes_modes=0
-[[ -z $source_release ]] || notes_modes=$((notes_modes + 1))
-[[ $generate_notes == false ]] || notes_modes=$((notes_modes + 1))
-[[ -z $release_notes ]] || notes_modes=$((notes_modes + 1))
-(( notes_modes <= 1 )) || fail 'Choose only one of copy-release-notes-from, generate-release-notes and release-notes.'
-[[ $notes_modes == 0 || $create_release == true ]] || fail 'Release notes options require create-release.'
-if [[ $create_release == true ]]; then
-  [[ -n ${GH_TOKEN:-} ]] || fail 'A token is required for Release creation.'
-  [[ -n ${PUBLISH_RELEASE_REPOSITORY:-} ]] || fail 'release-repository is required for Release creation.'
-  command -v gh > /dev/null || fail 'GitHub CLI is required for Release creation.'
-fi
-if [[ -n $source_release ]]; then
-  git check-ref-format "refs/tags/$source_release" || fail 'Invalid copy-release-notes-from.'
-  [[ $source_release != "$tag" ]] || fail 'Source and distribution tags must differ.'
-  # Fetch before publishing so a missing source Release cannot leave a new tag.
-  gh release view --repo "$PUBLISH_RELEASE_REPOSITORY" \
-    --json body --jq '.body' -- "$source_release" > "$temp_dir/release-notes.md"
-fi
-export GIT_INDEX_FILE="$temp_dir/index"
-git read-tree --empty
-git add --force -- "${paths[@]}"
-tree=$(git write-tree)
+validate_signing() {
+  validate_boolean sign-commit "$sign_commit"
+  validate_boolean sign-tag "$sign_tag"
+  if [[ $sign_commit == true || $sign_tag == true ]]; then
+    [[ -n $signing_key ]] || fail 'signing-key is required when signing is enabled.'
+  fi
+}
 
-# Use command-scoped identity and plumbing; do not change HEAD, config or local refs.
-export GIT_AUTHOR_NAME="${PUBLISH_AUTHOR_NAME:-github-actions[bot]}"
-export GIT_AUTHOR_EMAIL="${PUBLISH_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
-export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
-export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
-commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" | git "${signing_config[@]}" -c commit.gpgSign=false commit-tree "$tree" "${commit_signing[@]}")
-# Keep the tag ref in a disposable repository while sharing the object database.
-object_directory=$(git rev-parse --path-format=absolute --git-path objects)
-object_format=$(git rev-parse --show-object-format)
-git init --quiet --bare --initial-branch=distribution --object-format="$object_format" "$temp_dir/tag.git"
-# The disposable branch starts with an orphan root commit.
-GIT_OBJECT_DIRECTORY="$object_directory" \
-  git --git-dir="$temp_dir/tag.git" update-ref refs/heads/distribution "$commit"
-GIT_OBJECT_DIRECTORY="$object_directory" \
-  git "${signing_config[@]}" --git-dir="$temp_dir/tag.git" tag --annotate "${tag_signing[@]}" \
-    --message="Release $tag (source $source_sha)" -- "$tag" "$commit"
-tag_object=$(GIT_OBJECT_DIRECTORY="$object_directory" git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref")
+validate_release() {
+  local notes_modes=0
+  validate_boolean create-release "$create_release"
+  validate_boolean generate-release-notes "$generate_notes"
+  [[ -z $source_release ]] || notes_modes=$((notes_modes + 1))
+  [[ $generate_notes == false ]] || notes_modes=$((notes_modes + 1))
+  [[ -z $release_notes ]] || notes_modes=$((notes_modes + 1))
+  (( notes_modes <= 1 )) || fail 'Choose only one of copy-release-notes-from, generate-release-notes and release-notes.'
+  [[ $notes_modes == 0 || $create_release == true ]] || fail 'Release notes options require create-release.'
+  if [[ $create_release == true ]]; then
+    [[ -n ${GH_TOKEN:-} ]] || fail 'A token is required for Release creation.'
+    [[ -n $release_repository ]] || fail 'release-repository is required for Release creation.'
+    command -v gh > /dev/null || fail 'GitHub CLI is required for Release creation.'
+  fi
+  if [[ -n $source_release ]]; then
+    git check-ref-format "refs/tags/$source_release" || fail 'Invalid copy-release-notes-from.'
+    [[ $source_release != "$tag" ]] || fail 'Source and distribution tags must differ.'
+  fi
+}
 
-# The empty expected value requires the remote ref to be absent, including races.
-# Explicit refspec and disabled followTags prevent publishing other refs.
-git -c push.followTags=false push --no-follow-tags \
-  --force-with-lease="$ref:" origin "$tag_object:$ref"
+validate_inputs() {
+  cd -- "$working_directory"
+  [[ $(git rev-parse --is-inside-work-tree) == true ]] || fail 'A source checkout is required.'
+  [[ -z $(git rev-parse --show-prefix) ]] || fail 'working-directory must be the repository root.'
+  source_sha=$(git rev-parse --verify 'HEAD^{commit}')
+  [[ -n $tag ]] || fail 'tag is required.'
+  git check-ref-format "refs/tags/$tag" || fail 'Invalid tag name.'
+  ref="refs/tags/$tag"
+  validate_paths
+  validate_signing
+  validate_release
+}
 
-if [[ $create_release == true ]]; then
-  notes_args=(--notes "$release_notes")
+ensure_tag_available() {
+  local status
+  if git show-ref --verify --quiet "$ref"; then
+    fail "Tag already exists locally: $tag"
+  fi
+
+  # An absent ref returns 2; transport and authentication errors remain errors.
+  if git ls-remote --exit-code --refs origin "$ref" > /dev/null; then
+    fail "Tag already exists on origin: $tag"
+  else
+    status=$?
+    [[ $status == 2 ]] || fail "Cannot check origin for the release tag (exit $status)."
+  fi
+}
+
+prepare_signing() {
+  local gpg_program
+  if [[ $sign_commit == true || $sign_tag == true ]]; then
+    # Preserve the caller's OpenPGP program in the disposable tag repository.
+    gpg_program=$(git config --get gpg.openpgp.program || git config --get gpg.program || printf gpg)
+    signing_config=(-c gpg.format=openpgp -c "gpg.openpgp.program=$gpg_program")
+  fi
+  if [[ $sign_commit == true ]]; then commit_signing=("-S$signing_key"); fi
+  if [[ $sign_tag == true ]]; then tag_signing=(--sign --local-user "$signing_key"); fi
+}
+
+prepare_workspace() {
+  temp_dir=$(mktemp -d "$temp_base/publish-built-action.XXXXXX")
+  trap cleanup EXIT
+  export GIT_INDEX_FILE="$temp_dir/index"
+  export GIT_AUTHOR_NAME="$author_name" GIT_AUTHOR_EMAIL="$author_email"
+  export GIT_COMMITTER_NAME="$author_name" GIT_COMMITTER_EMAIL="$author_email"
+}
+
+fetch_source_notes() {
+  if [[ -n $source_release ]]; then
+    # A failed read must stop publication before any tag is pushed.
+    gh release view --repo "$release_repository" \
+      --json body --jq '.body' -- "$source_release" > "$temp_dir/release-notes.md"
+  fi
+}
+
+create_distribution_commit() {
+  local tree
+  git read-tree --empty
+  git add --force -- "${paths[@]}"
+  tree=$(git write-tree)
+  commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" |
+    git "${signing_config[@]}" -c commit.gpgSign=false commit-tree "$tree" "${commit_signing[@]}")
+}
+
+create_distribution_tag() {
+  local object_directory object_format
+  object_directory=$(git rev-parse --path-format=absolute --git-path objects)
+  object_format=$(git rev-parse --show-object-format)
+  git init --quiet --bare --initial-branch=distribution --object-format="$object_format" "$temp_dir/tag.git"
+  # Keep the orphan branch and tag ref disposable; share only the objects.
+  GIT_OBJECT_DIRECTORY="$object_directory" \
+    git --git-dir="$temp_dir/tag.git" update-ref refs/heads/distribution "$commit"
+  GIT_OBJECT_DIRECTORY="$object_directory" \
+    git "${signing_config[@]}" --git-dir="$temp_dir/tag.git" tag --annotate "${tag_signing[@]}" \
+      --message="Release $tag (source $source_sha)" -- "$tag" "$commit"
+  tag_object=$(GIT_OBJECT_DIRECTORY="$object_directory" git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref")
+}
+
+push_distribution_tag() {
+  # Require an absent ref, including races, and never follow other local tags.
+  git -c push.followTags=false push --no-follow-tags \
+    --force-with-lease="$ref:" origin "$tag_object:$ref"
+}
+
+create_github_release() {
+  if [[ $create_release == false ]]; then return 0; fi
+  local notes_args=(--notes "$release_notes")
   if [[ -n $source_release ]]; then
     notes_args=(--notes-file "$temp_dir/release-notes.md")
   elif [[ $generate_notes == true ]]; then
     notes_args=(--generate-notes)
   fi
-  if ! release_url=$(gh release create --repo "$PUBLISH_RELEASE_REPOSITORY" \
+  if ! release_url=$(gh release create --repo "$release_repository" \
     --verify-tag --title "$tag" "${notes_args[@]}" -- "$tag"); then
     fail "Tag $tag was pushed, but Release creation failed. Retry only Release creation; do not rerun this action."
   fi
-fi
+}
 
-# Publish outputs only after successful publication. A failed Release step must retry
-# Release creation alone, because this action intentionally rejects existing tags.
-{
-  printf 'tag=%s\n' "$tag"
-  printf 'commit=%s\n' "$commit"
-  printf 'source=%s\n' "$source_sha"
-  printf 'release-url=%s\n' "$release_url"
-} >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-printf 'Published %s at %s (source %s).\n' "$tag" "$commit" "$source_sha"
+write_outputs() {
+  # Outputs describe success only after all requested operations complete.
+  {
+    printf 'tag=%s\n' "$tag"
+    printf 'commit=%s\n' "$commit"
+    printf 'source=%s\n' "$source_sha"
+    printf 'release-url=%s\n' "$release_url"
+  } >> "$output_file"
+  printf 'Published %s at %s (source %s).\n' "$tag" "$commit" "$source_sha"
+}
+
+main() {
+  local output_file=${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}
+  local working_directory=${PUBLISH_WORKING_DIRECTORY:-.}
+  local tag=${PUBLISH_TAG:-} paths_input=${PUBLISH_PATHS:-}
+  local sign_commit=${PUBLISH_SIGN_COMMIT:-false} sign_tag=${PUBLISH_SIGN_TAG:-false}
+  local signing_key=${PUBLISH_SIGNING_KEY:-}
+  local author_name=${PUBLISH_AUTHOR_NAME:-github-actions[bot]}
+  local author_email=${PUBLISH_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}
+  local create_release=${PUBLISH_CREATE_RELEASE:-false}
+  local source_release=${PUBLISH_COPY_RELEASE_NOTES_FROM:-}
+  local generate_notes=${PUBLISH_GENERATE_RELEASE_NOTES:-false}
+  local release_notes=${PUBLISH_RELEASE_NOTES:-} release_repository=${PUBLISH_RELEASE_REPOSITORY:-}
+  local temp_base=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+
+  # Phase functions share these inputs, prepared options and publication results.
+  local paths=() signing_config=() commit_signing=() tag_signing=(--no-sign)
+  local source_sha='' ref='' commit='' tag_object='' release_url=''
+
+  # Call phases directly so failures retain errexit, rather than in conditionals
+  # or command substitutions that could mask a failed preparation command.
+  validate_inputs
+  ensure_tag_available
+  prepare_signing
+  prepare_workspace
+  fetch_source_notes
+  create_distribution_commit
+  create_distribution_tag
+  push_distribution_tag
+  create_github_release
+  write_outputs
+}
+
+main "$@"
