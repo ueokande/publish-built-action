@@ -14,7 +14,13 @@ inputs:
     description: Create a GitHub Release after pushing the distribution tag. Must be true or false.
     default: 'false'
   copy-release-notes-from:
-    description: Copy this source Release body. Requires create-release; omit to leave release notes empty.
+    description: Copy this source Release body. Requires create-release; mutually exclusive with generate-release-notes and release-notes.
+    default: ''
+  generate-release-notes:
+    description: Generate release notes using GitHub. Requires create-release; mutually exclusive with copying or explicit notes.
+    default: 'false'
+  release-notes:
+    description: Explicit release notes body. Requires create-release when nonempty; mutually exclusive with copying or generated notes.
     default: ''
   release-repository:
     description: Repository containing the source and distribution Releases; must match the checkout origin.
@@ -47,6 +53,8 @@ runs:
         PUBLISH_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         PUBLISH_CREATE_RELEASE: ${{ inputs.create-release }}
         PUBLISH_COPY_RELEASE_NOTES_FROM: ${{ inputs.copy-release-notes-from }}
+        PUBLISH_GENERATE_RELEASE_NOTES: ${{ inputs.generate-release-notes }}
+        PUBLISH_RELEASE_NOTES: ${{ inputs.release-notes }}
         PUBLISH_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
         GH_TOKEN: ${{ inputs.token }}
         PUBLISH_ACTION_PATH: ${{ github.action_path }}

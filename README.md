@@ -77,7 +77,9 @@ artifact transfer, npm publication and floating tag updates remain with the call
 | `paths` | Required | Newline-separated literal distribution paths, relative to the checkout root. Include `action.yml`, documentation and other required files explicitly. |
 | `working-directory` | `.` | Source checkout root. |
 | `create-release` | `false` | Create a GitHub Release after pushing the tag. |
-| `copy-release-notes-from` | Empty | Copy this source Release body; otherwise leave notes empty. Requires `create-release: true`; must differ from `tag`. |
+| `copy-release-notes-from` | Empty | Copy this source Release body. Requires `create-release: true`; must differ from `tag`. |
+| `generate-release-notes` | `false` | Generate notes using GitHub. Requires `create-release: true`. |
+| `release-notes` | Empty | Explicit notes body; supports multiline text. Requires `create-release: true` when nonempty. |
 | `release-repository` | `${{ github.repository }}` | Repository for Releases; must match `origin`. |
 | `token` | `${{ github.token }}` | API token for optional Release operations. Does not configure Git authentication. |
 
@@ -86,14 +88,18 @@ See [path rules](docs/reference.md#path-rules) for details.
 
 ## GitHub Releases
 
-| `create-release` | `copy-release-notes-from` | Result |
-| --- | --- | --- |
-| `false` | Empty | Tag only (default). |
-| `true` | Empty | Release with empty notes. |
-| `true` | Source tag | Release with the body from that source Release. |
+`create-release` defaults to `false` (tag only). Set it to `true` and choose at
+most one note source:
 
-`create-release` accepts only `true` or `false`. Setting `copy-release-notes-from`
-without enabling Release creation is an error. Leave it empty for blank release notes.
+| Note source | GitHub CLI behavior |
+| --- | --- |
+| `copy-release-notes-from: source-v1.2.3` | Copy the source Release body with `--notes-file`. |
+| `generate-release-notes: 'true'` | Generate notes with `--generate-notes`. |
+| `release-notes: Your release notes` | Pass the supplied body to `--notes`. |
+| None | Leave notes empty with `--notes ''`. |
+
+Note sources are mutually exclusive and require Release creation. Boolean inputs
+accept only `true` or `false`. See [note examples](docs/reference.md#release-behavior).
 
 **If Release creation fails after the tag push, retry only Release creation.**
 Do not rerun this action or the publishing job; the existing tag will be rejected.

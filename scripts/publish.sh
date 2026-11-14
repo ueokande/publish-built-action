@@ -44,9 +44,17 @@ temp_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-built-action.XXXXX
 trap 'rm -rf -- "$temp_dir"' EXIT
 create_release=${PUBLISH_CREATE_RELEASE:-false}
 source_release=${PUBLISH_COPY_RELEASE_NOTES_FROM:-}
+generate_notes=${PUBLISH_GENERATE_RELEASE_NOTES:-false}
+release_notes=${PUBLISH_RELEASE_NOTES:-}
 release_url=''
 [[ $create_release == true || $create_release == false ]] || fail 'create-release must be true or false.'
-[[ -z $source_release || $create_release == true ]] || fail 'copy-release-notes-from requires create-release.'
+[[ $generate_notes == true || $generate_notes == false ]] || fail 'generate-release-notes must be true or false.'
+notes_modes=0
+[[ -z $source_release ]] || notes_modes=$((notes_modes + 1))
+[[ $generate_notes == false ]] || notes_modes=$((notes_modes + 1))
+[[ -z $release_notes ]] || notes_modes=$((notes_modes + 1))
+(( notes_modes <= 1 )) || fail 'Choose only one of copy-release-notes-from, generate-release-notes and release-notes.'
+[[ $notes_modes == 0 || $create_release == true ]] || fail 'Release notes options require create-release.'
 if [[ $create_release == true ]]; then
   [[ -n ${GH_TOKEN:-} ]] || fail 'A token is required for Release creation.'
   [[ -n ${PUBLISH_RELEASE_REPOSITORY:-} ]] || fail 'release-repository is required for Release creation.'
@@ -89,9 +97,11 @@ git -c push.followTags=false push --no-follow-tags \
   --force-with-lease="$ref:" origin "$tag_object:$ref"
 
 if [[ $create_release == true ]]; then
-  notes_args=(--notes '')
+  notes_args=(--notes "$release_notes")
   if [[ -n $source_release ]]; then
     notes_args=(--notes-file "$temp_dir/release-notes.md")
+  elif [[ $generate_notes == true ]]; then
+    notes_args=(--generate-notes)
   fi
   if ! release_url=$(gh release create --repo "$PUBLISH_RELEASE_REPOSITORY" \
     --verify-tag --title "$tag" "${notes_args[@]}" -- "$tag"); then
