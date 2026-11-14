@@ -24,6 +24,12 @@ fixture() {
   cd "$root/source"
   printf 'dist/\n' > .gitignore
   printf 'source\n' > source.txt
+  printf 'export const value = 1;\n' > source.ts
+  printf 'readme\n' > README.md
+  printf 'changelog\n' > CHANGELOG.md
+  printf 'license\n' > LICENSE
+  mkdir .github
+  printf 'development config\n' > .github/development.yml
   git add .
   git commit -qm 'feat: initial source'
   git remote add origin "$root/remote.git"
@@ -82,6 +88,7 @@ fixture
 printf 'staged\n' > unrelated.txt
 git add unrelated.txt
 printf 'unstaged\n' >> source.txt
+printf 'uncommitted readme\n' >> README.md
 printf 'untracked\n' > untracked.txt
 git tag -a other -m 'Unrelated tag'
 git config push.followTags true
@@ -95,9 +102,13 @@ eq "$(remote cat-file -t refs/tags/v1.2.3)" tag
 eq "$(remote for-each-ref --format='%(taggername)' refs/tags/v1.2.3)" 'github-actions[bot]'
 eq "$(remote for-each-ref --format='%(contents:subject)' refs/tags/v1.2.3)" "Release v1.2.3 (source $source_sha)"
 eq "$(remote rev-parse 'refs/tags/v1.2.3^{}')" "$commit"
-eq "$(remote rev-parse "$commit^")" "$source_sha"
+eq "$(remote rev-list --parents -n 1 "$commit")" "$commit"
+eq "$(remote rev-list --count "$commit")" 1
 eq "$(remote show "$commit:dist/index.js")" built
-eq "$(remote show "$commit:source.txt")" source
+eq "$(remote ls-tree -r --name-only "$commit")" $'CHANGELOG.md\nLICENSE\nREADME.md\ndist/index.js'
+eq "$(remote show "$commit:README.md")" readme
+eq "$(remote show "$commit:CHANGELOG.md")" changelog
+eq "$(remote show "$commit:LICENSE")" license
 if remote cat-file -e "$commit:unrelated.txt" 2>/dev/null; then fail 'Included unrelated staged file'; fi
 eq "$(remote for-each-ref --format='%(refname)' refs/tags)" refs/tags/v1.2.3
 eq "$(remote rev-parse refs/heads/main)" "$source_sha"
@@ -110,7 +121,7 @@ eq "$(sed -n 's/^source=//p' "$GITHUB_OUTPUT")" "$source_sha"
 eq "$(sed -n 's/^tag=//p' "$GITHUB_OUTPUT")" v1.2.3
 eq "$(remote show -s --format=%an "$commit")" 'github-actions[bot]'
 [[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Temporary index leaked'
-pass 'annotated tag, ignored build, parent, outputs, identity and caller state'
+pass 'annotated tag, ignored build, orphan history, documentation, outputs, identity and caller state'
 
 : > "$GITHUB_OUTPUT"
 old_tag=$(remote rev-parse refs/tags/v1.2.3)
@@ -214,7 +225,8 @@ PUBLISH_WORKING_DIRECTORY="$PWD"
 eq "$(git rev-parse --is-shallow-repository)" true
 publish
 commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
-eq "$(remote rev-parse "$commit^")" "$source_sha"
+eq "$(remote rev-list --parents -n 1 "$commit")" "$commit"
+eq "$(remote rev-list --count "$commit")" 1
 eq "$(remote show "$commit:dist/index.js")" 'shallow build'
 pass 'shallow detached checkout needs no full fetch'
 
@@ -336,5 +348,42 @@ PUBLISH_COPY_RELEASE_NOTES=yes
 reject
 absent
 pass 'invalid copy-release-notes boolean is rejected'
+
+fixture
+# Documentation is optional and never synthesized, including the license.
+git rm -q README.md CHANGELOG.md LICENSE
+git commit -qm 'docs: remove documentation'
+source_sha=$(git rev-parse HEAD)
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+eq "$(remote ls-tree -r --name-only "$commit")" dist/index.js
+pass 'missing documentation is omitted without inventing files'
+
+fixture
+printf 'name: Distribution\n' > action.yml
+PUBLISH_PATHS=$'action.yml\ndist'
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+eq "$(remote show "$commit:action.yml")" 'name: Distribution'
+eq "$(remote ls-tree -r --name-only "$commit")" $'CHANGELOG.md\nLICENSE\nREADME.md\naction.yml\ndist/index.js'
+# A fresh clone of the tag must contain only the isolated distribution history.
+git clone -q --branch "$PUBLISH_TAG" "file://$root/remote.git" "$root/distribution" 2> "$root/clone-log"
+eq "$(git -C "$root/distribution" rev-list --count HEAD)" 1
+[[ ! -e $root/distribution/source.ts && ! -e $root/distribution/.github ]] || fail 'Source files leaked'
+pass 'explicit action metadata and fresh tag clone contain only distribution files'
+
+fixture
+git mv README.md README
+git mv CHANGELOG.md changelog.rst
+git mv LICENSE license.txt
+mkdir docs
+printf 'nested documentation\n' > docs/README.md
+git add docs
+git commit -qm 'docs: use alternative documentation names'
+source_sha=$(git rev-parse HEAD)
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+eq "$(remote ls-tree -r --name-only "$commit")" $'README\nchangelog.rst\ndist/index.js\nlicense.txt'
+pass 'root documentation names support case and extensions without retaining nested docs'
 
 printf 'Passed %s integration scenarios.\n' "$cases"

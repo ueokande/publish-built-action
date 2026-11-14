@@ -1,11 +1,11 @@
 name: Publish built action
-description: Create a distribution commit with built files and push an immutable tag, and optionally copy a source GitHub Release.
+description: Create an orphan distribution commit with built files and push an immutable tag, and optionally copy a source GitHub Release.
 inputs:
   tag:
     description: New release tag name. Existing local or remote tags are rejected.
     required: true
   paths:
-    description: Newline-separated literal paths to built files or directories, relative to the repository root.
+    description: Newline-separated literal distribution paths, including required action metadata. Root README, CHANGELOG and LICENSE files are retained automatically.
     required: true
   working-directory:
     description: Repository root containing the caller's source checkout and built files.
@@ -33,7 +33,7 @@ outputs:
     description: Distribution commit SHA targeted by the annotated tag.
     value: ${{ steps.publish.outputs.commit }}
   source:
-    description: Source HEAD SHA used as the distribution commit's parent.
+    description: Source HEAD SHA recorded as provenance; the distribution commit has no parent.
     value: ${{ steps.publish.outputs.source }}
   release-url:
     description: Created GitHub Release URL, or empty when Release creation is disabled.

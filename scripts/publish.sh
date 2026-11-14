@@ -39,7 +39,7 @@ while IFS= read -r path || [[ -n $path ]]; do
 done <<< "${PUBLISH_PATHS:-}"
 (( ${#paths[@]} > 0 )) || fail 'At least one build path is required.'
 
-# Seed a separate index from HEAD, excluding unrelated staged and unstaged edits.
+# Build an isolated distribution tree without inheriting source files or history.
 temp_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-built-action.XXXXXX")
 trap 'rm -rf -- "$temp_dir"' EXIT
 create_release=${PUBLISH_CREATE_RELEASE:-false}
@@ -64,7 +64,16 @@ if [[ $copy_notes == true ]]; then
     --json body --jq '.body' -- "$source_release" > "$temp_dir/release-notes.md"
 fi
 export GIT_INDEX_FILE="$temp_dir/index"
-git read-tree "$source_sha"
+git read-tree --empty
+# Retain only root documentation from the source commit, not working-tree edits.
+while IFS= read -r -d '' entry; do
+  name=${entry#*$'\t'}
+  if [[ ( $entry == '100644 blob '* || $entry == '100755 blob '* ) &&
+    ${name,,} =~ ^(readme|changelog|license)(\.[^/]*)?$ ]]; then
+    printf '%s\0' "$entry"
+  fi
+done < <(git ls-tree -z "$source_sha") > "$temp_dir/documentation.index"
+git update-index -z --index-info < "$temp_dir/documentation.index"
 git add --force -- "${paths[@]}"
 tree=$(git write-tree)
 
@@ -73,13 +82,15 @@ export GIT_AUTHOR_NAME='github-actions[bot]'
 export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
 export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
-commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" | git commit-tree "$tree" -p "$source_sha")
+commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" | git commit-tree "$tree")
 # Keep the tag ref in a disposable repository while sharing the object database.
 object_directory=$(git rev-parse --path-format=absolute --git-path objects)
 object_format=$(git rev-parse --show-object-format)
 tag_object=$(
-  git init --quiet --bare --object-format="$object_format" "$temp_dir/tag.git"
+  git init --quiet --bare --initial-branch=distribution --object-format="$object_format" "$temp_dir/tag.git"
   export GIT_OBJECT_DIRECTORY="$object_directory"
+  # The disposable branch starts with an orphan root commit.
+  git --git-dir="$temp_dir/tag.git" update-ref refs/heads/distribution "$commit"
   git --git-dir="$temp_dir/tag.git" tag --annotate --no-sign \
     --message="Release $tag (source $source_sha)" -- "$tag" "$commit"
   git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref"

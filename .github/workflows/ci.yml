@@ -59,7 +59,8 @@ jobs:
           test -n "$COMMIT"
           test -n "$SOURCE"
           git --git-dir="$RUNNER_TEMP/remote.git" cat-file -e "$COMMIT:dist/index.js"
-          test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-parse "$COMMIT^")" = "$SOURCE"
+          test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-list --parents -n 1 "$COMMIT")" = "$COMMIT"
+          test "$(git --git-dir="$RUNNER_TEMP/remote.git" ls-tree -r --name-only "$COMMIT")" = dist/index.js
           test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-parse "refs/tags/$TAG^{}")" = "$COMMIT"
           test "$(git -C "$RUNNER_TEMP/source" rev-parse HEAD)" = "$SOURCE"
 
