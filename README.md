@@ -1,6 +1,6 @@
 # Publish built action
 
-Create a distribution commit containing prebuilt artifacts and push a new,
+Create an orphan distribution commit containing prebuilt artifacts and push a new,
 annotated release tag. Optionally copy a source GitHub Release body into a new
 distribution Release. Keep generated JavaScript out of your development branch
 while making an action consumable directly from a release tag.
@@ -16,9 +16,10 @@ The caller checks out the source, builds and tests it, then places the generated
 files in that checkout. This action:
 
 1. Uses the current `HEAD` as the source commit.
-2. Creates a tree from that commit plus only the specified artifact paths,
-   force-adding ignored files.
-3. Creates a child distribution commit and an annotated tag with source provenance.
+2. Creates an empty tree and adds only the specified distribution paths,
+   force-adding ignored files, plus root README, CHANGELOG and LICENSE files.
+3. Creates a parentless root commit on a disposable orphan `distribution` branch
+   and an annotated tag that records the source SHA as provenance.
 4. Pushes only that tag to `origin`.
 5. If `create-release` is `true`, creates a published GitHub Release for the new
    tag, using the distribution tag as its title. With `copy-release-notes: true`,
@@ -29,17 +30,32 @@ When copying is enabled, the source body is fetched before the tag push.
 A failed source read prevents publication. A failed Release creation leaves the
 already-pushed tag intact and fails the action; retry only Release creation.
 
+The distribution commit has **no parent**: `git log` at its tag contains only
+that release's root commit, never the source branch's history or previous
+releases. The source SHA remains available in the commit message, annotation and
+`source` output. Only the tag is pushed; the temporary orphan branch is removed
+with its repository after the run.
+
 The source branch, `HEAD`, caller's index, local tags, and Git configuration stay
-unchanged. Unrelated staged, unstaged, and untracked files are excluded. Changes
-inside selected paths are included; tracked deletions within a selected existing
-directory are included too. A distribution commit is created even when the
-selected files match `HEAD`. The bot identity is `github-actions[bot]` with email
+unchanged. Source code and development files outside `paths` are excluded.
+Only root regular files named `README`, `CHANGELOG`, or `LICENSE`, optionally
+followed by a dot extension (case-insensitive, for example `README.md`), are
+retained automatically from source `HEAD`. Uncommitted documentation changes
+are excluded unless the file is also explicitly selected in `paths`. Missing
+documentation is skipped; no license or other file is invented.
+
+Files in `paths` come from the working tree, preserving their relative paths.
+Include all files needed to consume the action, such as `action.yml` and `dist`.
+No source files are removed from within an explicitly selected directory: select
+only distribution files, not source directories. A fresh root commit is created
+for each release, even when its files match an earlier release. The bot identity
+is `github-actions[bot]` with email
 `41898282+github-actions[bot]@users.noreply.github.com`.
 
 Existing local or remote tags are errors, even if they already point to the
 expected commit. A remote lookup failure is an error. An explicit absent-ref
 lease also rejects a competing publisher that creates the tag before the push.
-The action never updates a branch or reuses, moves, or deletes a tag. It does not
+The action never updates a caller or remote branch or reuses, moves, or deletes a tag. It does not
 provide server-side tag protection: configure GitHub tag rulesets to prevent
 other actors from updating or deleting release tags.
 
@@ -53,7 +69,7 @@ it creates a normal published Release. It never edits an existing Release.
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `tag` | Yes | — | New tag name, for example `v1.2.3`. Must be a valid Git tag ref. |
-| `paths` | Yes | — | Newline-separated literal artifact paths relative to the source repository root. |
+| `paths` | Yes | — | Newline-separated literal distribution paths relative to the source repository root, including required action metadata. Root documentation is retained automatically. |
 | `working-directory` | No | `.` | Source repository root; useful for checkouts in a subdirectory. |
 | `create-release` | No | `false` | Create a GitHub Release after the tag push. Accepts only `true` or `false`. |
 | `copy-release-notes` | No | `false` | Copy the source Release body instead of generating notes. Requires `create-release: true`. |
@@ -77,7 +93,9 @@ before publication. To create a Release without copying:
 ```yaml
 with:
   tag: v1.2.3
-  paths: dist
+  paths: |
+    action.yml
+    dist
   create-release: 'true'
   copy-release-notes: 'false'
 ```
@@ -96,7 +114,7 @@ Git attributes and clean filters apply when adding files, as with `git add`.
 | --- | --- |
 | `tag` | Successfully published tag name. |
 | `commit` | Distribution commit SHA (the annotated tag's target). |
-| `source` | Source `HEAD` SHA (the distribution commit's parent). |
+| `source` | Original source `HEAD` SHA recorded as provenance; not a parent of the distribution commit. |
 | `release-url` | Created GitHub Release URL, or empty in tag-only mode. |
 
 Failed runs do not return success outputs. A lost connection can make a push's
@@ -141,8 +159,10 @@ generate and commit `.github/workflows/actions.lock` in the caller repository
 with `gh actions-lock` to lock the actions they use. This repository's lockfile
 does not automatically cover workflows in your repository.
 
-This example assumes the caller has `package-lock.json`, `npm test`, and
-`npm run build` producing `dist`.
+This example assumes the caller has `action.yml`, `package-lock.json`, `npm test`,
+and `npm run build` producing `dist`. The published tree contains `action.yml`,
+`dist`, and any root README, CHANGELOG and LICENSE files; TypeScript sources and
+package manifests are excluded.
 
 ```yaml
 name: Release
@@ -178,7 +198,9 @@ jobs:
         id: publish
         with:
           tag: ${{ inputs.tag }}
-          paths: dist
+          paths: |
+            action.yml
+            dist
 ```
 
 ## Separate build and publication jobs
@@ -246,7 +268,9 @@ jobs:
       - uses: ueokande/publish-built-action@REVIEWED_COMMIT_SHA
         with:
           tag: ${{ inputs.tag }}
-          paths: dist
+          paths: |
+            action.yml
+            dist
 ```
 
 ## Use release-please outputs
@@ -270,7 +294,9 @@ package, a release-please manifest configuration can use the `source` component:
 Use that as `release-please-config.json` with an initialized
 `.release-please-manifest.json` (for example `{".": "0.0.0"}` for a new package).
 Release-please creates `source-v1.2.3`; the distribution action creates `v1.2.3`
-using its `version` output. Do not let release-please create the distribution tag
+using its `version` output. Copying source notes is useful because distribution
+commits do not include source history for generated-note comparisons. Do not let
+release-please create the distribution tag
 first. This example uses root-package outputs; monorepos need path-prefixed outputs.
 The action copies the source Release body rather than generating new notes. It
 fetches the body before publishing the tag so a failed read does not leave a
@@ -328,7 +354,9 @@ jobs:
         id: publish
         with:
           tag: v${{ needs.release.outputs.version }}
-          paths: dist
+          paths: |
+            action.yml
+            dist
           create-release: 'true'
           copy-release-notes: 'true'
           source-release-tag: ${{ needs.release.outputs.source_tag }}
