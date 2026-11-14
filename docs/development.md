@@ -10,8 +10,8 @@ bash tests/integration.sh
 
 Tests use temporary local bare remotes and a stub GitHub CLI for Release calls;
 they never publish tags or Releases to GitHub. Signing tests generate an isolated
-ephemeral key, verify commit and tag signatures, and remove the test keyring and
-its GPG agent afterward. The stub checks body transfer,
+ephemeral keys, verify commit and tag signatures, test protected-key import and
+cleanup on failures, and remove the test keyrings and GPG agents afterward. The stub checks body transfer,
 operation order and failure recovery without requiring credentials. Floating-tag
 tests cover atomic rejection, concurrent ref updates, downgrade checks and
 independent tag signatures. CI runs

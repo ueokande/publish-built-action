@@ -82,7 +82,9 @@ jobs:
 | `working-directory` | `.` | Source checkout root. |
 | `sign-commit` | `false` | GPG-sign the distribution commit. |
 | `sign-tag` | `false` | GPG-sign the annotated tag. |
-| `signing-key` | Empty | Imported OpenPGP key fingerprint; required when signing. |
+| `gpg-private-key` | Empty | OpenPGP private key to import for signing; pass through a secret. |
+| `gpg-passphrase` | Empty | Optional single-line passphrase for `gpg-private-key`. |
+| `signing-key` | Empty | Signing key fingerprint; detected automatically when importing one secret key. |
 | `author-name` | `github-actions[bot]` | Commit author, committer and tagger name. |
 | `author-email` | Bot email | Commit author, committer and tagger email; see [signing](docs/signing.md). |
 | `create-release` | `false` | Create a GitHub Release after pushing the tag. |
@@ -133,11 +135,12 @@ accept only `true` or `false`. See [note examples](docs/reference.md#release-beh
 Do not rerun this action or the publishing job; the existing tag will be rejected.
 See [recovery commands](docs/reference.md#recover-a-failed-github-release-step).
 
-## GPG signing
+## Commit and tag signing
 
-Set `sign-commit: 'true'`, `sign-tag: 'true'`, or both, with `signing-key` set to
-an already imported OpenPGP key fingerprint. Signing failures stop publication
-before the tag push. See [key setup and an example](docs/signing.md).
+Set `sign-commit: 'true'`, `sign-tag: 'true'`, or both, and pass the key through
+`gpg-private-key` with an optional `gpg-passphrase`. The action imports, signs and
+cleans up the key itself. Existing keyrings are also supported with `signing-key`.
+See [distribution commit and tag signing](docs/signing.md).
 
 ## Permissions
 
@@ -166,7 +169,7 @@ Outputs are available after all requested operations succeed.
 - [Use release-please outputs and copy source release notes](docs/examples.md#use-release-please-outputs)
 - [Publication behavior, path rules and recovery](docs/reference.md)
 - [Floating tags, atomic updates and migration](docs/floating-tags.md)
-- [GPG signing and identity setup](docs/signing.md)
+- [Distribution commit and tag signing](docs/signing.md)
 - [Tests and workflow lockfile maintenance](docs/development.md)
 
 The examples use exact action versions. Generate a workflow lockfile in your own

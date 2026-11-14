@@ -1,25 +1,31 @@
-# GPG signing
+# GPG signing for distribution commits and release tags
 
 Use `sign-commit` and `sign-tag` independently, or enable both. Both default to
 `false`; repository-level automatic signing settings do not enable them.
 `sign-tag` applies to the fixed tag and every explicitly selected floating tag.
-When either is enabled, `signing-key` must identify an imported OpenPGP private
-key. A full fingerprint is recommended. SSH and X.509 signing are not supported.
-The caller imports the key and makes it available for unattended signing through
-GPG and its agent; this action does not import keys or accept a passphrase.
 
-Signing uses the caller's `GNUPGHOME` and OpenPGP program (`gpg.openpgp.program`,
-then `gpg.program`, otherwise `gpg`). Git configuration is applied per command,
-including in the temporary tag repository, without modifying the caller's config.
-All tag signatures are prepared before pushing. If signing a commit or any tag
-fails, no tag is pushed and no Release is created.
+Pass an ASCII-armored OpenPGP private key through `gpg-private-key` and its
+optional single-line passphrase through `gpg-passphrase`. The action imports the
+key into an isolated temporary GPG home and signs noninteractively. No separate
+action, Bash import step or Git signing configuration is required.
+
+With one imported secret key, `signing-key` is detected automatically. If the
+input contains multiple secret keys, supply `signing-key` to select one; a full
+fingerprint is recommended. Missing keys, ambiguous selection and incorrect
+passphrases fail before any tag is pushed. SSH and X.509 signing are not supported.
+
+Private keyring files, the passphrase file and the action's GPG agent are cleaned
+up when the action exits, including after a failed import, signature, push or
+Release operation. The caller's keyring and Git configuration are preserved.
+All signatures are prepared before pushing; a signing failure creates no remote
+tag or Release.
 
 ## Example
 
-This example uses the Import GPG action to load a protected key and configure
-its agent. Store the ASCII-armored private key in the repository secret
-`GPG_PRIVATE_KEY` and its passphrase in `GPG_PASSPHRASE`. Do not store private keys
-or passphrases in the checkout or pass them as this action's inputs.
+Store the ASCII-armored key in the repository secret `PRIVATE_SIGNING_KEY` and,
+if protected, its passphrase in `GPG_PASSPHRASE`. Set repository variables
+`GPG_AUTHOR_NAME` and `GPG_AUTHOR_EMAIL` to the signing identity. Do not store keys
+or passphrases in the checkout or supply secret values as literal workflow text.
 
 Adjust the build commands and explicit distribution paths for your repository.
 Lock the example's dependencies with `gh actions-lock` in your own repository.
@@ -54,11 +60,6 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: crazy-max/ghaction-import-gpg@v7.0.0
-        id: gpg
-        with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - uses: ueokande/publish-built-action@v0.0.1
         with:
           tag: ${{ inputs.tag }}
@@ -70,10 +71,23 @@ jobs:
             LICENSE
           sign-commit: 'true'
           sign-tag: 'true'
-          signing-key: ${{ steps.gpg.outputs.fingerprint }}
-          author-name: ${{ steps.gpg.outputs.name }}
-          author-email: ${{ steps.gpg.outputs.email }}
+          gpg-private-key: ${{ secrets.PRIVATE_SIGNING_KEY }}
+          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          author-name: ${{ vars.GPG_AUTHOR_NAME }}
+          author-email: ${{ vars.GPG_AUTHOR_EMAIL }}
 ```
+
+## Existing keyrings
+
+If `gpg-private-key` is omitted, supply `signing-key` for an already available
+private key. This preserves the caller's `GNUPGHOME` and OpenPGP program
+(`gpg.openpgp.program`, then `gpg.program`, otherwise `gpg`). In that mode, prepare
+any agent or passphrase handling yourself; `gpg-passphrase` requires a private-key
+input. The action does not clean or stop the caller's keyring or agent.
+
+With an imported key, signing always uses the system GnuPG with loopback
+passphrase handling in the isolated home. Key import requires at least one of
+`sign-commit` and `sign-tag` to be enabled; it never enables signing implicitly.
 
 ## Identity and verification
 
