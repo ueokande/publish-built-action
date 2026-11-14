@@ -44,6 +44,7 @@ fixture() {
   export PUBLISH_TAG=v1.2.3 PUBLISH_PATHS=dist PUBLISH_WORKING_DIRECTORY="$PWD"
   export GITHUB_OUTPUT="$root/outputs" RUNNER_TEMP="$root"
   : > "$GITHUB_OUTPUT"
+  unset PUBLISH_FLOATING_TAGS
   unset PUBLISH_COPY_RELEASE_NOTES_FROM PUBLISH_RELEASE_REPOSITORY PUBLISH_RELEASE_NOTES
   export PUBLISH_GENERATE_RELEASE_NOTES=false
   unset PUBLISH_SIGNING_KEY PUBLISH_AUTHOR_NAME PUBLISH_AUTHOR_EMAIL
@@ -526,5 +527,273 @@ reject
 [[ $(cat "$root/log") == *'create-release must be true or false.'* ]] || fail 'Local validation did not precede remote access and temporary setup'
 absent
 pass 'invalid configuration is reported before remote lookup or temporary setup'
+
+fixture
+export PUBLISH_FLOATING_TAGS=$'v1\nv1.2\nstable'
+git tag v1
+git tag -a unused -m 'Unrelated tag'
+git config push.followTags true
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+for alias in v1 v1.2 stable; do
+  eq "$(remote cat-file -t "refs/tags/$alias")" tag
+  eq "$(remote rev-parse "refs/tags/$alias^{}")" "$commit"
+  eq "$(remote for-each-ref --format='%(tag)' "refs/tags/$alias")" "$alias"
+done
+eq "$(remote for-each-ref --format='%(refname)' refs/tags)" $'refs/tags/stable\nrefs/tags/v1\nrefs/tags/v1.2\nrefs/tags/v1.2.3'
+eq "$(git rev-parse refs/tags/v1)" "$source_sha"
+eq "$(remote rev-parse refs/heads/main)" "$source_sha"
+pass 'floating tags are annotated aliases of one orphan commit without changing local refs'
+
+old_fixed=$(remote rev-parse refs/tags/v1.2.3)
+old_commit=$commit
+PUBLISH_TAG=v1.2.4
+printf 'new build\n' > dist/index.js
+: > "$GITHUB_OUTPUT"
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+[[ $commit != "$old_commit" ]] || fail 'Expected a new distribution commit'
+eq "$(remote rev-list --count "$commit")" 1
+eq "$(remote rev-parse refs/tags/v1.2.3)" "$old_fixed"
+for alias in v1 v1.2 stable; do eq "$(remote rev-parse "refs/tags/$alias^{}")" "$commit"; done
+pass 'floating refs advance while earlier fixed releases and orphan history are preserved'
+
+current_alias=$(remote rev-parse refs/tags/stable)
+: > "$GITHUB_OUTPUT"
+reject
+eq "$(remote rev-parse refs/tags/stable)" "$current_alias"
+pass 'existing fixed version prevents all floating updates'
+
+PUBLISH_TAG=v1.2.2
+reject
+absent
+eq "$(remote rev-parse refs/tags/stable)" "$current_alias"
+[[ $(cat "$root/log") == *'backward'* ]] || fail 'Expected downgrade rejection'
+pass 'an older release cannot move floating tags backward'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+remote update-ref refs/tags/stable "$source_sha"
+reject
+absent
+eq "$(remote rev-parse refs/tags/stable)" "$source_sha"
+[[ $(cat "$root/log") == *'Cannot identify a fixed version'* ]] || fail 'Expected unknown version rejection'
+pass 'unknown existing floating target is never overwritten'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+PUBLISH_TAG=v1.9.0
+publish
+PUBLISH_TAG=v1.10.0
+: > "$GITHUB_OUTPUT"
+publish
+eq "$(remote rev-parse 'refs/tags/stable^{}')" "$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")"
+PUBLISH_TAG=v1.8.0
+: > "$GITHUB_OUTPUT"
+reject
+absent
+pass 'version ordering compares decimal numbers instead of lexical tag order'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+PUBLISH_TAG=v1.999999999999999999999999999999.0
+publish
+PUBLISH_TAG=v1.1000000000000000000000000000000.0
+: > "$GITHUB_OUTPUT"
+publish
+PUBLISH_TAG=v1.999999999999999999999999999998.0
+: > "$GITHUB_OUTPUT"
+reject
+absent
+pass 'large version components cannot overflow downgrade checks'
+
+for invalid in $'v1\nv1' v1.2.3 v1.2.2 $'v1\nv1/stable' 'bad tag'; do
+  fixture
+  export PUBLISH_FLOATING_TAGS="$invalid"
+  reject
+  absent
+  eq "$(remote for-each-ref --format='%(refname)' refs/tags)" ''
+  pass "invalid floating names are rejected before publication: ${invalid//$'\n'/,}"
+done
+
+for invalid in custom-tag v1.2.3-rc.1 v1.2.3+build v01.2.3; do
+  fixture
+  export PUBLISH_FLOATING_TAGS=stable
+  PUBLISH_TAG=$invalid
+  reject
+  absent
+  pass "floating publication requires a stable full version: $invalid"
+done
+
+fixture
+export PUBLISH_FLOATING_TAGS=$'\nchannels/stable\n\n'
+publish
+eq "$(remote rev-parse 'refs/tags/channels/stable^{}')" "$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")"
+pass 'namespaced floating names and blank lines are supported'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+remote config receive.advertiseAtomic false
+reject
+absent
+eq "$(remote for-each-ref --format='%(refname)' refs/tags)" ''
+pass 'unsupported atomic push never falls back to partial publication'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+cat > "$root/remote.git/hooks/update" <<'HOOK'
+#!/usr/bin/env bash
+[[ $1 != refs/tags/stable ]]
+HOOK
+chmod +x "$root/remote.git/hooks/update"
+reject
+absent
+eq "$(remote for-each-ref --format='%(refname)' refs/tags)" ''
+pass 'server rejection of one alias rejects the complete atomic publication'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+cat > .git/hooks/pre-push <<'HOOK'
+#!/usr/bin/env bash
+set -eu
+git --git-dir="$RACE_REMOTE" update-ref refs/tags/stable "$RACE_SOURCE"
+HOOK
+chmod +x .git/hooks/pre-push
+export RACE_REMOTE="$root/remote.git" RACE_SOURCE="$source_sha"
+reject
+absent
+eq "$(remote rev-parse refs/tags/stable)" "$source_sha"
+pass 'an alias created concurrently cannot be overwritten or leave a fixed tag behind'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+publish
+old_fixed=$(remote rev-parse refs/tags/v1.2.3)
+PUBLISH_TAG=v1.2.4
+: > "$GITHUB_OUTPUT"
+cat > .git/hooks/pre-push <<'HOOK'
+#!/usr/bin/env bash
+set -eu
+git --git-dir="$RACE_REMOTE" update-ref refs/tags/stable "$RACE_SOURCE"
+HOOK
+chmod +x .git/hooks/pre-push
+export RACE_REMOTE="$root/remote.git" RACE_SOURCE="$source_sha"
+reject
+absent
+eq "$(remote rev-parse refs/tags/stable)" "$source_sha"
+eq "$(remote rev-parse refs/tags/v1.2.3)" "$old_fixed"
+pass 'an alias changed after lookup rejects the complete update using its exact old object'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+cat > .git/hooks/pre-push <<'HOOK'
+#!/usr/bin/env bash
+set -eu
+git --git-dir="$RACE_REMOTE" update-ref refs/tags/v1.2.3 "$RACE_SOURCE"
+HOOK
+chmod +x .git/hooks/pre-push
+export RACE_REMOTE="$root/remote.git" RACE_SOURCE="$source_sha"
+reject
+eq "$(remote rev-parse refs/tags/v1.2.3)" "$source_sha"
+if remote show-ref --verify --quiet refs/tags/stable; then fail 'Alias was published after fixed-tag race'; fi
+pass 'a fixed-tag race leaves floating tags unpublished'
+
+fixture
+export PUBLISH_FLOATING_TAGS=$'v1\nstable'
+export PUBLISH_SIGN_COMMIT=true PUBLISH_SIGN_TAG=true PUBLISH_SIGNING_KEY="$fingerprint"
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+remote verify-commit "$commit" > "$root/verify-commit" 2>&1
+for alias in v1.2.3 v1 stable; do
+  remote verify-tag --raw "refs/tags/$alias" > "$root/verify-tag" 2>&1
+  [[ $(cat "$root/verify-tag") == *"VALIDSIG $fingerprint "* ]] || fail 'Wrong alias signing key'
+done
+pass 'fixed and floating annotated tags have independently verifiable GPG signatures'
+
+release_fixture
+export PUBLISH_FLOATING_TAGS=stable
+publish
+eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 2
+eq "$(remote rev-parse 'refs/tags/stable^{}')" "$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")"
+pass 'only the fixed tag receives a GitHub Release after all refs are published'
+
+release_fixture
+export PUBLISH_FLOATING_TAGS=stable
+MOCK_MODE=create-failure
+reject
+remote show-ref --verify --quiet refs/tags/v1.2.3 || fail 'Fixed tag was removed'
+remote show-ref --verify --quiet refs/tags/stable || fail 'Floating tag was removed'
+[[ $(cat "$root/log") == *'Retry only Release creation'* ]] || fail 'Missing recovery guidance'
+pass 'Release failure retains both fixed and floating tags for Release-only recovery'
+
+release_fixture
+export PUBLISH_FLOATING_TAGS=source-v1.2.3
+reject
+absent
+[[ ! -e $root/gh-calls ]] || fail 'Source Release was read before validating its tag'
+pass 'source Release tag cannot be overwritten as a floating alias'
+
+fixture
+PUBLISH_TAG=v1.2.2
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+remote update-ref refs/tags/stable "$commit"
+export PUBLISH_FLOATING_TAGS=stable
+PUBLISH_TAG=v1.2.3
+: > "$GITHUB_OUTPUT"
+publish
+eq "$(remote cat-file -t refs/tags/stable)" tag
+eq "$(remote rev-parse 'refs/tags/stable^{}')" "$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")"
+pass 'existing lightweight aliases advance when their fixed version is known'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+publish
+commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
+remote tag -a v2.0.0 "$commit" -m 'Another fixed version of the same commit'
+PUBLISH_TAG=v1.3.0
+: > "$GITHUB_OUTPUT"
+reject
+absent
+eq "$(remote rev-parse 'refs/tags/stable^{}')" "$commit"
+pass 'downgrade protection checks every fixed version sharing an alias target'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable
+git remote set-url origin "$root/unavailable.git"
+reject
+absent
+pass 'floating tag lookup failure stops publication'
+
+fixture
+export PUBLISH_FLOATING_TAGS=stable PUBLISH_SIGN_TAG=true PUBLISH_SIGNING_KEY="$fingerprint"
+cat > "$root/failing-gpg" <<'GPG'
+#!/usr/bin/env bash
+set -eu
+if [[ -e $MOCK_ROOT/signed-once ]]; then exit 1; fi
+: > "$MOCK_ROOT/signed-once"
+exec gpg "$@"
+GPG
+chmod +x "$root/failing-gpg"
+git config gpg.program "$root/failing-gpg"
+reject
+absent
+[[ -e $root/signed-once ]] || fail 'Expected the fixed tag to be signed before alias signing failed'
+eq "$(remote for-each-ref --format='%(refname)' refs/tags)" ''
+eq "$(git for-each-ref --format='%(refname)' refs/tags)" ''
+pass 'floating tag signing failure publishes neither the signed fixed tag nor aliases'
+
+fixture
+IFS= read -r literal_alias <<'TAG'
+$(touch${IFS}unexpected-marker)
+TAG
+export PUBLISH_FLOATING_TAGS="$literal_alias"
+publish
+PUBLISH_TAG=v1.2.4
+: > "$GITHUB_OUTPUT"
+publish
+eq "$(remote rev-parse "refs/tags/$literal_alias^{}")" "$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")"
+[[ ! -e unexpected-marker ]] || fail 'Floating tag data was evaluated as shell code'
+pass 'floating tag names remain literal during lookup and update'
 
 printf 'Passed %s integration scenarios.\n' "$cases"

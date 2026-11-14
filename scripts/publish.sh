@@ -34,6 +34,77 @@ validate_paths() {
   (( ${#paths[@]} > 0 )) || fail 'At least one build path is required.'
 }
 
+validate_floating_tags() {
+  local floating_tag previous
+  while IFS= read -r floating_tag || [[ -n $floating_tag ]]; do
+    [[ -n $floating_tag ]] || continue
+    git check-ref-format "refs/tags/$floating_tag" || fail "Invalid floating tag: $floating_tag"
+    [[ -z $source_release || $floating_tag != "$source_release" ]] || fail 'The source Release tag cannot be a floating tag.'
+    [[ ! $floating_tag =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([+-].*)?$ ]] || fail 'Full version tags cannot be floating tags.'
+    for previous in "$tag" "${floating_tags[@]}"; do
+      [[ $floating_tag != "$previous" ]] || fail "Duplicate or fixed floating tag: $floating_tag"
+      [[ $floating_tag != "$previous/"* && $previous != "$floating_tag/"* ]] || fail 'Tag names cannot have conflicting path prefixes.'
+    done
+    floating_tags+=("$floating_tag")
+  done <<< "$floating_tags_input"
+  if (( ${#floating_tags[@]} > 0 )); then
+    [[ $tag =~ $stable_version_pattern ]] || fail 'floating-tags requires a stable vMAJOR.MINOR.PATCH tag.'
+  fi
+}
+
+# Compare decimal components without integer overflow, even for large versions.
+version_is_older() {
+  local left=$1 right=$2 index LC_ALL=C
+  local left_parts=() right_parts=()
+  IFS=. read -r -a left_parts <<< "${left#v}"
+  IFS=. read -r -a right_parts <<< "${right#v}"
+  for index in 0 1 2; do
+    if (( ${#left_parts[index]} < ${#right_parts[index]} )); then return 0; fi
+    if (( ${#left_parts[index]} > ${#right_parts[index]} )); then return 1; fi
+    if [[ ${left_parts[index]} != "${right_parts[index]}" ]]; then
+      [[ ${left_parts[index]} < ${right_parts[index]} ]]
+      return
+    fi
+  done
+  return 1
+}
+
+read_remote_tags() {
+  local snapshot object remote_ref
+  if ! snapshot=$(git ls-remote --tags origin); then
+    fail 'Cannot read origin tags.'
+  fi
+  while IFS=$'\t' read -r object remote_ref; do
+    [[ -n $remote_ref ]] || continue
+    if [[ $remote_ref == *'^{}' ]]; then
+      remote_targets["${remote_ref%'^{}'}"]=$object
+    else
+      remote_objects["$remote_ref"]=$object
+    fi
+  done <<< "$snapshot"
+}
+
+check_floating_versions() {
+  local floating_tag floating_ref target candidate_ref candidate_target version known
+  for floating_tag in "${floating_tags[@]}"; do
+    floating_ref="refs/tags/$floating_tag"
+    [[ -n ${remote_objects["$floating_ref"]:-} ]] || continue
+    target=${remote_targets["$floating_ref"]:-${remote_objects["$floating_ref"]}}
+    known=false
+    for candidate_ref in "${!remote_objects[@]}"; do
+      version=${candidate_ref#refs/tags/}
+      [[ $version =~ $stable_version_pattern ]] || continue
+      candidate_target=${remote_targets["$candidate_ref"]:-${remote_objects["$candidate_ref"]}}
+      [[ $candidate_target == "$target" ]] || continue
+      known=true
+      if version_is_older "$tag" "$version"; then
+        fail "Refusing to move $floating_tag backward from $version to $tag."
+      fi
+    done
+    [[ $known == true ]] || fail "Cannot identify a fixed version for floating tag: $floating_tag"
+  done
+}
+
 validate_signing() {
   validate_boolean sign-commit "$sign_commit"
   validate_boolean sign-tag "$sign_tag"
@@ -71,6 +142,7 @@ validate_inputs() {
   git check-ref-format "refs/tags/$tag" || fail 'Invalid tag name.'
   ref="refs/tags/$tag"
   validate_paths
+  validate_floating_tags
   validate_signing
   validate_release
 }
@@ -79,6 +151,13 @@ ensure_tag_available() {
   local status
   if git show-ref --verify --quiet "$ref"; then
     fail "Tag already exists locally: $tag"
+  fi
+
+  if (( ${#floating_tags[@]} > 0 )); then
+    read_remote_tags
+    [[ -z ${remote_objects["$ref"]:-} ]] || fail "Tag already exists on origin: $tag"
+    check_floating_versions
+    return 0
   fi
 
   # An absent ref returns 2; transport and authentication errors remain errors.
@@ -126,24 +205,34 @@ create_distribution_commit() {
     git "${signing_config[@]}" -c commit.gpgSign=false commit-tree "$tree" "${commit_signing[@]}")
 }
 
-create_distribution_tag() {
-  local object_directory object_format
+create_distribution_tags() {
+  local object_directory object_format release_tag tag_ref tag_object
   object_directory=$(git rev-parse --path-format=absolute --git-path objects)
   object_format=$(git rev-parse --show-object-format)
   git init --quiet --bare --initial-branch=distribution --object-format="$object_format" "$temp_dir/tag.git"
   # Keep the orphan branch and tag ref disposable; share only the objects.
   GIT_OBJECT_DIRECTORY="$object_directory" \
     git --git-dir="$temp_dir/tag.git" update-ref refs/heads/distribution "$commit"
-  GIT_OBJECT_DIRECTORY="$object_directory" \
-    git "${signing_config[@]}" --git-dir="$temp_dir/tag.git" tag --annotate "${tag_signing[@]}" \
-      --message="Release $tag (source $source_sha)" -- "$tag" "$commit"
-  tag_object=$(GIT_OBJECT_DIRECTORY="$object_directory" git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref")
+  push_leases=("--force-with-lease=$ref:")
+  for release_tag in "$tag" "${floating_tags[@]}"; do
+    tag_ref="refs/tags/$release_tag"
+    GIT_OBJECT_DIRECTORY="$object_directory" \
+      git "${signing_config[@]}" --git-dir="$temp_dir/tag.git" tag --annotate "${tag_signing[@]}" \
+        --message="Release $tag (source $source_sha)" -- "$release_tag" "$commit"
+    tag_object=$(GIT_OBJECT_DIRECTORY="$object_directory" git --git-dir="$temp_dir/tag.git" rev-parse --verify "$tag_ref")
+    push_refspecs+=("$tag_object:$tag_ref")
+    if [[ $release_tag != "$tag" ]]; then
+      push_leases+=("--force-with-lease=$tag_ref:${remote_objects["$tag_ref"]:-}")
+    fi
+  done
 }
 
-push_distribution_tag() {
-  # Require an absent ref, including races, and never follow other local tags.
-  git -c push.followTags=false push --no-follow-tags \
-    --force-with-lease="$ref:" origin "$tag_object:$ref"
+push_distribution_tags() {
+  local atomic_args=()
+  if (( ${#floating_tags[@]} > 0 )); then atomic_args=(--atomic); fi
+  # Require the observed refs, and never fall back to a partial update.
+  git -c push.followTags=false push --no-follow-tags "${atomic_args[@]}" \
+    "${push_leases[@]}" origin "${push_refspecs[@]}"
 }
 
 create_github_release() {
@@ -175,6 +264,8 @@ main() {
   local output_file=${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}
   local working_directory=${PUBLISH_WORKING_DIRECTORY:-.}
   local tag=${PUBLISH_TAG:-} paths_input=${PUBLISH_PATHS:-}
+  local floating_tags_input=${PUBLISH_FLOATING_TAGS:-}
+  local stable_version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
   local sign_commit=${PUBLISH_SIGN_COMMIT:-false} sign_tag=${PUBLISH_SIGN_TAG:-false}
   local signing_key=${PUBLISH_SIGNING_KEY:-}
   local author_name=${PUBLISH_AUTHOR_NAME:-github-actions[bot]}
@@ -187,7 +278,9 @@ main() {
 
   # Phase functions share these inputs, prepared options and publication results.
   local paths=() signing_config=() commit_signing=() tag_signing=(--no-sign)
-  local source_sha='' ref='' commit='' tag_object='' release_url=''
+  local source_sha='' ref='' commit='' release_url=''
+  local floating_tags=() push_refspecs=() push_leases=()
+  local -A remote_objects=() remote_targets=()
 
   # Call phases directly so failures retain errexit, rather than in conditionals
   # or command substitutions that could mask a failed preparation command.
@@ -197,8 +290,8 @@ main() {
   prepare_workspace
   fetch_source_notes
   create_distribution_commit
-  create_distribution_tag
-  push_distribution_tag
+  create_distribution_tags
+  push_distribution_tags
   create_github_release
   write_outputs
 }

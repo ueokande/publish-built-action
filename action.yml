@@ -4,6 +4,9 @@ inputs:
   tag:
     description: New release tag name. Existing local or remote tags are rejected.
     required: true
+  floating-tags:
+    description: Newline-separated tag names to create or update atomically with tag. Requires a stable vMAJOR.MINOR.PATCH tag; existing targets must have a known fixed version.
+    default: ''
   paths:
     description: Newline-separated literal distribution paths. Explicitly include all required files, including action metadata, README, CHANGELOG and LICENSE.
     required: true
@@ -64,6 +67,7 @@ runs:
       shell: bash
       env:
         PUBLISH_TAG: ${{ inputs.tag }}
+        PUBLISH_FLOATING_TAGS: ${{ inputs.floating-tags }}
         PUBLISH_PATHS: ${{ inputs.paths }}
         PUBLISH_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         PUBLISH_SIGN_COMMIT: ${{ inputs.sign-commit }}

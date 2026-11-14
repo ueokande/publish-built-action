@@ -48,6 +48,9 @@ jobs:
           working-directory: ${{ runner.temp }}/source
           tag: v1.2.3
           paths: dist
+          floating-tags: |
+            v1
+            stable
       - name: Verify composite outputs and remote contents
         shell: bash
         env:
@@ -63,6 +66,9 @@ jobs:
           test "$(git --git-dir="$RUNNER_TEMP/remote.git" ls-tree -r --name-only "$COMMIT")" = dist/index.js
           test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-parse "refs/tags/$TAG^{}")" = "$COMMIT"
           test "$(git -C "$RUNNER_TEMP/source" rev-parse HEAD)" = "$SOURCE"
+          for alias in v1 stable; do
+            test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-parse "refs/tags/$alias^{}")" = "$COMMIT"
+          done
 
   workflow-lint:
     runs-on: ubuntu-24.04
