@@ -89,7 +89,7 @@ git -c push.followTags=false push --no-follow-tags \
   --force-with-lease="$ref:" origin "$tag_object:$ref"
 
 if [[ $create_release == true ]]; then
-  notes_args=(--generate-notes)
+  notes_args=(--notes '')
   if [[ -n $source_release ]]; then
     notes_args=(--notes-file "$temp_dir/release-notes.md")
   fi

@@ -102,10 +102,8 @@ package, a release-please manifest configuration can use the `source` component:
 Use that as `release-please-config.json` with an initialized
 `.release-please-manifest.json` (for example `{".": "0.0.0"}` for a new package).
 Release-please creates `source-v1.2.3`; the distribution action creates `v1.2.3`
-using its `version` output. Copying source notes is useful because distribution
-commits do not include source history for generated-note comparisons. Do not let
-release-please create the distribution tag
-first. This example uses root-package outputs; monorepos need path-prefixed outputs.
+using its `version` output. Copying source notes preserves release-please's release
+description. Do not let release-please create the distribution tag first. This example uses root-package outputs; monorepos need path-prefixed outputs.
 The action copies the source Release body rather than generating new notes. It
 fetches the body before publishing the tag so a failed read does not leave a
 distribution tag without its notes. Replace `master` with your development

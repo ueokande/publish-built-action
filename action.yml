@@ -14,7 +14,7 @@ inputs:
     description: Create a GitHub Release after pushing the distribution tag. Must be true or false.
     default: 'false'
   copy-release-notes-from:
-    description: Copy this source Release body instead of generating notes. Requires create-release; empty generates notes.
+    description: Copy this source Release body. Requires create-release; omit to leave release notes empty.
     default: ''
   release-repository:
     description: Repository containing the source and distribution Releases; must match the checkout origin.

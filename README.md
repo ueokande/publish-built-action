@@ -77,7 +77,7 @@ artifact transfer, npm publication and floating tag updates remain with the call
 | `paths` | Required | Newline-separated literal distribution paths, relative to the checkout root. Include `action.yml`, documentation and other required files explicitly. |
 | `working-directory` | `.` | Source checkout root. |
 | `create-release` | `false` | Create a GitHub Release after pushing the tag. |
-| `copy-release-notes-from` | Empty | Copy this source Release body instead of generating notes. Requires `create-release: true`; must differ from `tag`. |
+| `copy-release-notes-from` | Empty | Copy this source Release body; otherwise leave notes empty. Requires `create-release: true`; must differ from `tag`. |
 | `release-repository` | `${{ github.repository }}` | Repository for Releases; must match `origin`. |
 | `token` | `${{ github.token }}` | API token for optional Release operations. Does not configure Git authentication. |
 
@@ -89,11 +89,11 @@ See [path rules](docs/reference.md#path-rules) for details.
 | `create-release` | `copy-release-notes-from` | Result |
 | --- | --- | --- |
 | `false` | Empty | Tag only (default). |
-| `true` | Empty | Release with GitHub-generated notes. |
+| `true` | Empty | Release with empty notes. |
 | `true` | Source tag | Release with the body from that source Release. |
 
 `create-release` accepts only `true` or `false`. Setting `copy-release-notes-from`
-without enabling Release creation is an error. Leave it empty to generate notes.
+without enabling Release creation is an error. Leave it empty for blank release notes.
 
 **If Release creation fails after the tag push, retry only Release creation.**
 Do not rerun this action or the publishing job; the existing tag will be rejected.

@@ -93,14 +93,13 @@ gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes-f
 ```
 
 For a release originally created with copying disabled, retry only its creation
-with generated notes instead:
+with explicitly empty notes instead:
 
 ```bash
-gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --generate-notes
+gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes ''
 ```
 
-When copying was enabled, preserve the source body with `--notes-file` rather than
-switching to `--generate-notes`.
+When copying was enabled, use `--notes-file` to preserve the source body.
 First check `gh release view v1.2.3` if the API outcome was uncertain. If a Release
 already exists, inspect it rather than recreating or moving the tag. A source
 release created by release-please is separate from the distribution release.

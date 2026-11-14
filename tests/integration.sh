@@ -61,7 +61,8 @@ case "$1 $2" in
       [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --notes-file '*' -- v1.2.3' ]]
       cmp -- "$MOCK_ROOT/notes" "${9}"
     else
-      [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --generate-notes -- v1.2.3' ]]
+      [[ ${*:1:7} == 'release create --repo owner/project --verify-tag --title v1.2.3' ]]
+      [[ $# == 11 && ${8} == --notes && -z ${9} && ${10} == -- && ${11} == v1.2.3 ]]
     fi
     git --git-dir="$MOCK_ROOT/remote.git" show-ref --verify --quiet refs/tags/v1.2.3
     [[ $MOCK_MODE != create-failure ]] || exit 1
@@ -312,7 +313,7 @@ unset PUBLISH_COPY_RELEASE_NOTES_FROM
 publish
 eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 1
 eq "$(sed -n 's/^release-url=//p' "$GITHUB_OUTPUT")" 'https://github.com/owner/project/releases/tag/v1.2.3'
-pass 'Release creation without copying uses generated notes and no source lookup'
+pass 'Release creation without copying passes explicit empty notes and skips source lookup'
 
 release_fixture
 PUBLISH_CREATE_RELEASE=false
