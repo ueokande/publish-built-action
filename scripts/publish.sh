@@ -74,11 +74,15 @@ export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
 export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 commit=$(printf 'release: prepare %s from %s\n' "$tag" "$source_sha" | git commit-tree "$tree" -p "$source_sha")
+# Keep the tag ref in a disposable repository while sharing the object database.
+object_directory=$(git rev-parse --path-format=absolute --git-path objects)
+object_format=$(git rev-parse --show-object-format)
 tag_object=$(
-  {
-    printf 'object %s\ntype commit\ntag %s\ntagger %s\n\n' "$commit" "$tag" "$(git var GIT_COMMITTER_IDENT)"
-    printf 'Release %s (source %s)\n' "$tag" "$source_sha"
-  } | git mktag
+  git init --quiet --bare --object-format="$object_format" "$temp_dir/tag.git"
+  export GIT_OBJECT_DIRECTORY="$object_directory"
+  git --git-dir="$temp_dir/tag.git" tag --annotate --no-sign \
+    --message="Release $tag (source $source_sha)" -- "$tag" "$commit"
+  git --git-dir="$temp_dir/tag.git" rev-parse --verify "$ref"
 )
 
 # The empty expected value requires the remote ref to be absent, including races.

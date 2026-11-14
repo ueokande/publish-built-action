@@ -102,7 +102,7 @@ Git attributes and clean filters apply when adding files, as with `git add`.
 Failed runs do not return success outputs. A lost connection can make a push's
 outcome uncertain; inspect the remote tag before attempting recovery. Objects
 created locally may remain unreachable after a failure; no local release ref is
-created. Builds should be complete and no other process should modify the checkout
+created in the caller's repository. Builds should be complete and no other process should modify the checkout
 while publishing.
 
 ## Permissions and authentication

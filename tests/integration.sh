@@ -92,6 +92,8 @@ publish
 commit=$(sed -n 's/^commit=//p' "$GITHUB_OUTPUT")
 [[ ! -e $root/gh-calls ]] || fail 'Tag-only mode called GitHub CLI'
 eq "$(remote cat-file -t refs/tags/v1.2.3)" tag
+eq "$(remote for-each-ref --format='%(taggername)' refs/tags/v1.2.3)" 'github-actions[bot]'
+eq "$(remote for-each-ref --format='%(contents:subject)' refs/tags/v1.2.3)" "Release v1.2.3 (source $source_sha)"
 eq "$(remote rev-parse 'refs/tags/v1.2.3^{}')" "$commit"
 eq "$(remote rev-parse "$commit^")" "$source_sha"
 eq "$(remote show "$commit:dist/index.js")" built
@@ -181,6 +183,7 @@ absent
 eq "$(git hash-object .git/index)" "$before_index"
 eq "$(git rev-parse HEAD)" "$source_sha"
 [[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Temporary index leaked'
+eq "$(git for-each-ref --format='%(refname)' refs/tags)" ''
 pass 'push rejection preserves state, cleans temporary files and emits no outputs'
 
 fixture
