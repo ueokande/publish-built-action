@@ -1,0 +1,89 @@
+name: Publish built action
+description: Create an orphan distribution commit with built files and push an immutable tag, and optionally copy a source GitHub Release.
+inputs:
+  tag:
+    description: New release tag name. Existing local or remote tags are rejected.
+    required: true
+  floating-tags:
+    description: Newline-separated tag names to create or update atomically with tag. Requires a stable vMAJOR.MINOR.PATCH tag; existing targets must have a known fixed version.
+    default: ''
+  paths:
+    description: Newline-separated literal distribution paths. Explicitly include all required files, including action metadata, README, CHANGELOG and LICENSE.
+    required: true
+  working-directory:
+    description: Repository root containing the caller's source checkout and built files.
+    default: .
+  sign-commit:
+    description: GPG-sign the distribution commit using the configured or imported key. Must be true or false.
+    default: 'false'
+  sign-tag:
+    description: GPG-sign the annotated release tag using the configured or imported key. Must be true or false.
+    default: 'false'
+  gpg-private-key:
+    description: ASCII-armored OpenPGP private key to import into an isolated temporary keyring. Requires signing to be enabled.
+    default: ''
+  gpg-passphrase:
+    description: Optional single-line passphrase for gpg-private-key. Stored only in the temporary signing directory.
+    default: ''
+  signing-key:
+    description: OpenPGP signing key fingerprint. Optional with gpg-private-key containing one secret key; otherwise required when signing.
+    default: ''
+  author-name:
+    description: Name used for the commit author, committer and tagger.
+    default: github-actions[bot]
+  author-email:
+    description: Email used for the commit author, committer and tagger. Use an email associated with the signing key for GitHub verification.
+    default: 41898282+github-actions[bot]@users.noreply.github.com
+  create-release:
+    description: Create a GitHub Release after pushing the distribution tag. Must be true or false.
+    default: 'false'
+  copy-release-notes-from:
+    description: Copy this source Release body. Requires create-release; mutually exclusive with generate-release-notes.
+    default: ''
+  generate-release-notes:
+    description: Generate release notes using GitHub. Requires create-release; mutually exclusive with copy-release-notes-from.
+    default: 'false'
+  release-repository:
+    description: Repository containing the source and distribution Releases; must match the checkout origin.
+    default: ${{ github.repository }}
+  token:
+    description: GitHub API token for reading the source Release and creating the distribution Release. Does not configure Git authentication.
+    default: ${{ github.token }}
+outputs:
+  tag:
+    description: Published tag name.
+    value: ${{ steps.publish.outputs.tag }}
+  commit:
+    description: Distribution commit SHA targeted by the annotated tag.
+    value: ${{ steps.publish.outputs.commit }}
+  source:
+    description: Source HEAD SHA recorded as provenance; the distribution commit has no parent.
+    value: ${{ steps.publish.outputs.source }}
+  release-url:
+    description: Created GitHub Release URL, or empty when Release creation is disabled.
+    value: ${{ steps.publish.outputs.release-url }}
+runs:
+  using: composite
+  steps:
+    - name: Publish distribution
+      id: publish
+      shell: bash
+      env:
+        PUBLISH_TAG: ${{ inputs.tag }}
+        PUBLISH_FLOATING_TAGS: ${{ inputs.floating-tags }}
+        PUBLISH_PATHS: ${{ inputs.paths }}
+        PUBLISH_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PUBLISH_SIGN_COMMIT: ${{ inputs.sign-commit }}
+        PUBLISH_SIGN_TAG: ${{ inputs.sign-tag }}
+        PUBLISH_GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        PUBLISH_GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
+        PUBLISH_SIGNING_KEY: ${{ inputs.signing-key }}
+        PUBLISH_AUTHOR_NAME: ${{ inputs.author-name }}
+        PUBLISH_AUTHOR_EMAIL: ${{ inputs.author-email }}
+        PUBLISH_CREATE_RELEASE: ${{ inputs.create-release }}
+        PUBLISH_COPY_RELEASE_NOTES_FROM: ${{ inputs.copy-release-notes-from }}
+        PUBLISH_GENERATE_RELEASE_NOTES: ${{ inputs.generate-release-notes }}
+        PUBLISH_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
+        GH_TOKEN: ${{ inputs.token }}
+        PUBLISH_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$PUBLISH_ACTION_PATH/scripts/publish.sh"

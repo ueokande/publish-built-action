@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check Bash syntax and lint
+        run: |
+          bash -n scripts/publish.sh tests/integration.sh
+          shellcheck scripts/publish.sh tests/integration.sh
+      - name: Run isolated Git integration tests
+        run: bash tests/integration.sh
+      - name: Prepare composite action fixture
+        shell: bash
+        run: |
+          git init --bare "$RUNNER_TEMP/remote.git"
+          git init -b main "$RUNNER_TEMP/source"
+          cd "$RUNNER_TEMP/source"
+          git config user.name Tester
+          git config user.email test@example.com
+          printf 'dist/\n' > .gitignore
+          printf 'source\n' > source.txt
+          git add .
+          git commit -m 'feat: create fixture'
+          git remote add origin "$RUNNER_TEMP/remote.git"
+          git push origin HEAD
+          mkdir dist
+          printf 'built\n' > dist/index.js
+      - name: Exercise composite action
+        id: publish
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/source
+          tag: v1.2.3
+          paths: dist
+          floating-tags: |
+            v1
+            stable
+      - name: Verify composite outputs and remote contents
+        shell: bash
+        env:
+          TAG: ${{ steps.publish.outputs.tag }}
+          COMMIT: ${{ steps.publish.outputs.commit }}
+          SOURCE: ${{ steps.publish.outputs.source }}
+        run: |
+          test "$TAG" = v1.2.3
+          test -n "$COMMIT"
+          test -n "$SOURCE"
+          git --git-dir="$RUNNER_TEMP/remote.git" cat-file -e "$COMMIT:dist/index.js"
+          test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-list --parents -n 1 "$COMMIT")" = "$COMMIT"
+          test "$(git --git-dir="$RUNNER_TEMP/remote.git" ls-tree -r --name-only "$COMMIT")" = dist/index.js
+          test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-parse "refs/tags/$TAG^{}")" = "$COMMIT"
+          test "$(git -C "$RUNNER_TEMP/source" rev-parse HEAD)" = "$SOURCE"
+          for alias in v1 stable; do
+            test "$(git --git-dir="$RUNNER_TEMP/remote.git" rev-parse "refs/tags/$alias^{}")" = "$COMMIT"
+          done
+
+  workflow-lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Install pinned workflow linter
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint workflows
+        run: actionlint -color
+      - name: Verify workflow lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install github/gh-actions-lock --pin v0.4.1
+          gh actions-lock --verify --ignore-local-actions
