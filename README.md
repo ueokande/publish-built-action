@@ -26,8 +26,8 @@ publishes the selected distribution files.
 
 ## Quick start
 
-**This action has no published release tags yet.** Replace `REVIEWED_COMMIT_SHA`
-with a reviewed full commit SHA. The example assumes `npm test`, `npm run build`
+**The initial release tag `v0.0.1` used below has not been published yet.**
+The example assumes `npm test`, `npm run build`
 producing `dist`, and the files listed in `paths`. Adjust those paths to match your
 repository: **only `paths` are included**, even for ignored files and documentation.
 
@@ -61,7 +61,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: ueokande/publish-built-action@REVIEWED_COMMIT_SHA
+      - uses: ueokande/publish-built-action@v0.0.1
         id: publish
         with:
           tag: ${{ inputs.tag }}

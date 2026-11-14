@@ -4,8 +4,8 @@
 
 These examples build and test a Node.js action before publishing. Adjust the
 scripts and explicit distribution paths for your repository; every selected path
-must exist. `REVIEWED_COMMIT_SHA` is a placeholder for a reviewed full commit of
-this action, which has no published release tags yet. Generate your own workflow
+must exist. The examples use the planned initial release `v0.0.1`, which has
+not been published yet. Generate your own workflow
 lockfile with `gh actions-lock`; this repository's lockfile does not cover callers.
 
 ## Separate build and publication jobs
@@ -70,7 +70,7 @@ jobs:
         with:
           name: distribution-build
           path: dist
-      - uses: ueokande/publish-built-action@REVIEWED_COMMIT_SHA
+      - uses: ueokande/publish-built-action@v0.0.1
         with:
           tag: ${{ inputs.tag }}
           paths: |
@@ -156,7 +156,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: ueokande/publish-built-action@REVIEWED_COMMIT_SHA
+      - uses: ueokande/publish-built-action@v0.0.1
         id: publish
         with:
           tag: v${{ needs.release.outputs.version }}
