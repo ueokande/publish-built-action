@@ -1,7 +1,5 @@
 # Workflow examples
 
-[Back to README](../README.md)
-
 These examples build and test a Node.js action before publishing. Adjust the
 scripts and explicit distribution paths for your repository; every selected path
 must exist. Generate your own workflow lockfile with `gh actions-lock`; this

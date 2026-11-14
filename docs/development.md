@@ -1,7 +1,5 @@
 # Development
 
-[Back to README](../README.md)
-
 Run tests with Bash, Git and GnuPG (`gpg` and `gpgconf`), available on the
 supported GitHub-hosted Ubuntu runners:
 

@@ -1,7 +1,5 @@
 # Floating tags
 
-[Back to README](../README.md)
-
 `tag` is an immutable release identifier. `floating-tags` is an optional,
 newline-separated list of aliases that should follow the newly published
 release. Its default is empty, preserving fixed-tag-only publication.

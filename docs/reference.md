@@ -1,7 +1,5 @@
 # Publishing details and recovery
 
-[Back to README](../README.md)
-
 ## Distribution contents and history
 
 Only `paths` are added to an empty tree, from the working tree at publication

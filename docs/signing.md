@@ -1,7 +1,5 @@
 # GPG signing
 
-[Back to README](../README.md)
-
 Use `sign-commit` and `sign-tag` independently, or enable both. Both default to
 `false`; repository-level automatic signing settings do not enable them.
 `sign-tag` applies to the fixed tag and every explicitly selected floating tag.
