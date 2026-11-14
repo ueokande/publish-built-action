@@ -1,30 +1,27 @@
 # Development
 
-Run tests with Bash, Git and GnuPG (`gpg` and `gpgconf`), available on the
-supported GitHub-hosted Ubuntu runners:
+## Tests and CI
+
+Tests require Bash, Git and GnuPG (`gpg` and `gpgconf`), available on the supported
+GitHub-hosted Ubuntu runners:
 
 ```bash
 bash -n scripts/publish.sh tests/integration.sh
 bash tests/integration.sh
 ```
 
-Tests use temporary local bare remotes and a stub GitHub CLI for Release calls;
-they never publish tags or Releases to GitHub. Signing tests generate an isolated
-ephemeral keys, verify commit and tag signatures, test protected-key import and
-cleanup on failures, and remove the test keyrings and GPG agents afterward. The stub checks body transfer,
-operation order and failure recovery without requiring credentials. Floating-tag
-tests cover atomic rejection, concurrent ref updates, downgrade checks and
-independent tag signatures. CI runs
-Bash syntax checks, ShellCheck, integration tests, and an actual composite-action
-smoke test on Ubuntu 22.04 and 24.04, plus actionlint for workflow validation.
-The smoke test also pushes exclusively to a temporary local bare remote.
+Tests use temporary bare remotes, ephemeral signing keys and a stub GitHub CLI;
+they never publish to GitHub. They cover signatures, protected-key import and
+cleanup, note modes, atomic rejection, concurrent updates and downgrade checks.
+
+CI runs the suite and composite-action smoke test on Ubuntu 22.04 and 24.04,
+plus ShellCheck and actionlint. The smoke test also uses a temporary bare remote.
 
 ## Workflow dependencies
 
-CI references exact action versions and locks their commit SHAs and repository
-identities in `.github/workflows/actions.lock`. Regenerate the lockfile with the
-official extension after changing action references, then review and commit both
-the workflow and lockfile changes:
+Action versions are pinned by `.github/workflows/actions.lock`. After changing
+workflow dependencies, regenerate it with the official extension, review the
+workflow and lockfile diff, and commit both. Never edit the lockfile by hand.
 
 ```bash
 gh extension install github/gh-actions-lock --pin v0.4.1
@@ -32,14 +29,11 @@ gh actions-lock --ignore-local-actions
 gh actions-lock --verify --ignore-local-actions
 ```
 
-The `--ignore-local-actions` option keeps the composite smoke test's `uses: ./`
-reference: it intentionally tests the checked-out working tree and the action
-contains only Bash steps, with no external action dependencies. Revisit this
-choice if external action dependencies are added to `action.yml`.
+`--ignore-local-actions` preserves the smoke test's `uses: ./`, which tests the
+working tree. It is safe here because the composite contains only Bash steps;
+revisit this choice if external action dependencies are added.
 
-Generation and full verification require GitHub API access and an authenticated
-GitHub CLI. `gh actions-lock --verify-local --ignore-local-actions` checks
-coverage offline but does not verify upstream provenance. CI performs the full
-verification using its read-only `GITHUB_TOKEN`. Never edit the lockfile by hand.
-
-See the repository [LICENSE](../LICENSE).
+Generation and full verification require API access and an authenticated GitHub
+CLI; CI uses its read-only `GITHUB_TOKEN`. For offline coverage checks, use
+`gh actions-lock --verify-local --ignore-local-actions`, which does not verify
+upstream provenance.

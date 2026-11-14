@@ -1,7 +1,7 @@
 # Publish built action
 
-Publish prebuilt GitHub Actions as immutable release tags, with optional GitHub
-Release creation.
+Publish prebuilt GitHub Actions as immutable release tags, with optional floating
+tags, GitHub Releases and GPG signatures.
 
 ```text
 Source branch          Package contents          Release tag
@@ -15,20 +15,18 @@ Source branch          Package contents          Release tag
   o
 ```
 
-Each release tag points to an independent, parentless commit. Arrows show file
-transfer, not commit ancestry. Only tags are pushed; the source checkout is
-preserved. Existing fixed tags are rejected; only explicitly listed floating
-tags can move.
+Arrows represent file transfer, not ancestry: each release has a parentless
+commit. Only tags are pushed; the source checkout is preserved.
 
 Supported on GitHub-hosted Ubuntu 22.04 and 24.04, including `ubuntu-latest`.
-The caller checks out, builds and tests the source. This Bash/Git action
-publishes the selected distribution files.
+The caller checks out, builds and tests the source; this Bash/Git action publishes
+only the files listed in `paths`.
 
 ## Quick start
 
-The example assumes `npm test`, `npm run build`
-producing `dist`, and the files listed in `paths`. Adjust those paths to match your
-repository: **only `paths` are included**, even for ignored files and documentation.
+This example uses `npm test` and `npm run build` producing `dist`. Adjust the
+commands and `paths` for your repository. Every selected path must exist;
+README, CHANGELOG, LICENSE and action metadata are never included automatically.
 
 ```yaml
 name: Release
@@ -72,105 +70,75 @@ jobs:
             LICENSE
 ```
 
+The publishing job needs `contents: write` and authenticated Git access to
+`origin`. Checkout's `persist-credentials: true` supplies Git authentication;
+the `token` input is for Release API calls only. Full Git history is not required.
+See [authentication details](docs/reference.md#permissions-and-authentication).
+
 ## Inputs
+
+### Distribution
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `tag` | Required | New immutable distribution tag, such as `v1.2.3`. |
-| `floating-tags` | Empty | Newline-separated tags to create or update alongside the fixed tag, such as `v1` or `stable`. See [rules](docs/floating-tags.md). |
-| `paths` | Required | Newline-separated literal distribution paths, relative to the checkout root. Include `action.yml`, documentation and other required files explicitly. |
+| `tag` | Required | New fixed tag, such as `v1.2.3`. Existing local or remote tags are rejected. |
+| `paths` | Required | Newline-separated literal paths relative to the checkout root. Ignored files are included; globs are not expanded. |
 | `working-directory` | `.` | Source checkout root. |
-| `sign-commit` | `false` | GPG-sign the distribution commit. |
-| `sign-tag` | `false` | GPG-sign the annotated tag. |
-| `gpg-private-key` | Empty | OpenPGP private key to import for signing; pass through a secret. |
-| `gpg-passphrase` | Empty | Optional single-line passphrase for `gpg-private-key`. |
-| `signing-key` | Empty | Signing key fingerprint; detected automatically when importing one secret key. |
-| `author-name` | `github-actions[bot]` | Commit author, committer and tagger name. |
-| `author-email` | Bot email | Commit author, committer and tagger email; see [signing](docs/signing.md). |
-| `create-release` | `false` | Create a GitHub Release after pushing the tag. |
-| `copy-release-notes-from` | Empty | Copy this source Release body. Requires `create-release: true`; must differ from `tag`. |
-| `generate-release-notes` | `false` | Generate notes using GitHub. Requires `create-release: true`. |
+| `floating-tags` | Empty | Newline-separated aliases to create or update, such as `v1` or `stable`. |
+
+With floating tags, `tag` must be a stable `vMAJOR.MINOR.PATCH` version. The fixed
+tag and aliases are pushed atomically, with conflict and downgrade checks.
+See [floating tag examples and rules](docs/floating-tags.md) and [path rules](docs/reference.md#path-rules).
+
+### GitHub Releases
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `create-release` | `false` | Create a GitHub Release after pushing the tags. |
+| `copy-release-notes-from` | Empty | Copy the body from this source Release tag; must differ from `tag`. |
+| `generate-release-notes` | `false` | Generate notes using GitHub. |
 | `release-repository` | `${{ github.repository }}` | Repository for Releases; must match `origin`. |
-| `token` | `${{ github.token }}` | API token for optional Release operations. Does not configure Git authentication. |
+| `token` | `${{ github.token }}` | API token for Release operations; does not authenticate Git. |
 
-Paths must exist. Directories are included recursively; globs are not expanded.
-See [path rules](docs/reference.md#path-rules) for details.
+Note options require `create-release: 'true'` and are mutually exclusive. With
+neither selected, notes are empty. Boolean inputs accept only `true` or `false`.
 
-## Floating tags
-
-Optionally move aliases such as `v1`, `v1.2` or `stable` to the same distribution
-commit as the fixed version:
-
-```yaml
-with:
-  tag: v1.2.3
-  floating-tags: |
-    v1
-    v1.2
-    stable
-  paths: |
-    action.yml
-    dist
-```
-
-With floating tags, `tag` must be a stable `vMAJOR.MINOR.PATCH` version. All tags
-are pushed atomically with conflict and downgrade checks; the fixed tag is never
-overwritten. See [update rules and migration](docs/floating-tags.md).
-
-## GitHub Releases
-
-`create-release` defaults to `false` (tag only). Set it to `true` and choose at
-most one note source:
-
-| Note source | Release body |
-| --- | --- |
-| `copy-release-notes-from: source-v1.2.3` | Copied from the source Release. |
-| `generate-release-notes: 'true'` | Generated by GitHub. |
-| None | Empty. |
-
-Note sources are mutually exclusive and require Release creation. Boolean inputs
-accept only `true` or `false`. See [note examples](docs/reference.md#release-behavior).
-
-**If Release creation fails after the tag push, retry only Release creation.**
-Do not rerun this action or the publishing job; the existing tag will be rejected.
+**If Release creation fails after the push, retry only Release creation.** Do
+not rerun this action or the publishing job: the fixed tag already exists.
 See [recovery commands](docs/reference.md#recover-a-failed-github-release-step).
 
-## Commit and tag signing
+### Commit and tag signing
 
-Set `sign-commit: 'true'`, `sign-tag: 'true'`, or both, and pass the key through
-`gpg-private-key` with an optional `gpg-passphrase`. The action imports, signs and
-cleans up the key itself. Existing keyrings are also supported with `signing-key`.
-See [distribution commit and tag signing](docs/signing.md).
+| Input | Default | Description |
+| --- | --- | --- |
+| `sign-commit` | `false` | GPG-sign the distribution commit. |
+| `sign-tag` | `false` | GPG-sign the fixed tag and all floating tags. |
+| `gpg-private-key` | Empty | ASCII-armored OpenPGP private key, supplied through a secret. |
+| `gpg-passphrase` | Empty | Optional single-line passphrase for `gpg-private-key`. |
+| `signing-key` | Empty | Key fingerprint. Required for existing keyrings or multiple-key imports; detected automatically for a single-key import. |
+| `author-name` | `github-actions[bot]` | Commit author, committer and tagger name. |
+| `author-email` | [Bot email](docs/signing.md#identity-and-verification) | Commit author, committer and tagger email. |
 
-## Permissions
-
-The publishing job needs `contents: write` and authenticated Git access to
-`origin`. With checkout, use `persist-credentials: true`; full history is not
-required. The `token` input authenticates API calls only, not `git push`.
-Release operations use `gh`, preinstalled on GitHub-hosted Ubuntu.
-
-For cross-repository publishing, alternate credentials and downstream workflow
-triggers, see [authentication details](docs/reference.md#permissions-and-authentication).
+Enable signing explicitly; providing a key alone does not enable it. The action
+imports and cleans up private keys itself. See [key setup, examples and verification](docs/signing.md).
 
 ## Outputs
 
 | Output | Description |
 | --- | --- |
-| `tag` | Published tag name. |
+| `tag` | Published fixed tag name. |
 | `commit` | Distribution commit SHA. |
 | `source` | Source HEAD SHA, recorded as provenance. |
-| `release-url` | Created Release URL; empty in tag-only mode. |
+| `release-url` | Created Release URL; empty when Release creation is disabled. |
 
-Outputs are available after all requested operations succeed.
+Outputs are written after all requested operations succeed.
 
-## More examples and details
+## Guides
 
 - [Separate build and publish jobs using artifacts](docs/examples.md#separate-build-and-publication-jobs)
-- [Use release-please outputs and copy source release notes](docs/examples.md#use-release-please-outputs)
-- [Publication behavior, path rules and recovery](docs/reference.md)
-- [Floating tags, atomic updates and migration](docs/floating-tags.md)
-- [Distribution commit and tag signing](docs/signing.md)
+- [Use release-please and copy source Release notes](docs/examples.md#use-release-please-outputs)
+- [Publication details, authentication and recovery](docs/reference.md)
 - [Tests and workflow lockfile maintenance](docs/development.md)
 
-The examples use exact action versions. Generate a workflow lockfile in your own
-repository with `gh actions-lock` to pin their commits. See [LICENSE](LICENSE).
+Generate a workflow lockfile in your own repository with `gh actions-lock` to
+pin the examples' action versions. See [LICENSE](LICENSE).

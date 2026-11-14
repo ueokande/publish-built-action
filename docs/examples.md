@@ -7,13 +7,13 @@ repository's lockfile does not cover callers.
 
 ## Separate build and publication jobs
 
-Pass the exact source SHA between jobs so that downloaded artifacts are attached
-to the source that produced them. Upload `dist/` as the artifact root and download
-it into `dist`; this avoids accidentally nesting `dist/dist`. For multiple build
-roots, preserve their relative layout in the uploaded artifact. Artifact transfers
-do not preserve executable permissions; restore any required modes in the caller.
-Hidden files require the upload action's `include-hidden-files: true` option after
-checking that those files contain no secrets.
+Pass the build's exact source SHA to the publishing checkout. Upload `dist/` as
+the artifact root, then download into `dist` to preserve the expected layout.
+For multiple build roots, retain their relative paths in the artifact.
+
+Artifact transfers do not preserve executable modes; restore them if needed.
+Hidden files require `include-hidden-files: true` on upload, after checking that
+they contain no secrets.
 
 ```yaml
 name: Release with artifact
@@ -96,15 +96,14 @@ package, a release-please manifest configuration can use the `source` component:
 }
 ```
 
-Use that as `release-please-config.json` with an initialized
+Save this as `release-please-config.json` and initialize
 `.release-please-manifest.json` (for example `{".": "0.0.0"}` for a new package).
-Release-please creates `source-v1.2.3`; the distribution action creates `v1.2.3`
-using its `version` output. Copying source notes preserves release-please's release
-description. Do not let release-please create the distribution tag first. This example uses root-package outputs; monorepos need path-prefixed outputs.
-The action copies the source Release body rather than generating new notes. It
-fetches the body before publishing the tag so a failed read does not leave a
-distribution tag without its notes. Replace `master` with your development
-branch if necessary.
+Release-please creates the source tag `source-v1.2.3`; this action uses its source
+SHA and version outputs to publish `v1.2.3` and copy the source Release body.
+The tag names must differ, or the fixed distribution tag would already exist.
+
+The example uses root-package outputs; monorepos need path-prefixed outputs.
+Replace `master` if your development branch has a different name.
 
 ```yaml
 name: Release with release-please
@@ -166,4 +165,3 @@ jobs:
           create-release: 'true'
           copy-release-notes-from: ${{ needs.release.outputs.source_tag }}
 ```
-

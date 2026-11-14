@@ -1,8 +1,8 @@
 # Floating tags
 
-`tag` is an immutable release identifier. `floating-tags` is an optional,
-newline-separated list of aliases that should follow the newly published
-release. Its default is empty, preserving fixed-tag-only publication.
+Use `floating-tags` for aliases such as `v1`, `v1.2` or `stable` that should follow
+the new release. The default is empty: only the immutable `tag` is published.
+Names are literal; aliases are never derived or interpreted as version ranges.
 
 ```yaml
 with:
@@ -18,64 +18,51 @@ with:
     LICENSE
 ```
 
-Each name is literal: the action does not derive aliases or interpret `v1` as
-a version range. Select the aliases appropriate to the release yourself. Blank
-lines are ignored. Names must be valid Git tag refs and cannot be duplicates,
-conflict by path prefix (for example `v1` and `v1/stable`), equal the fixed tag,
-look like full version tags, or equal `copy-release-notes-from`.
+## Requirements
 
-## Update rules
+- With floating tags, `tag` must be `vMAJOR.MINOR.PATCH`, without leading zeroes,
+  prerelease suffixes or build metadata. Other fixed tag formats remain supported
+  when no floating tags are requested.
+- Alias names must be valid Git tag refs. Blank lines are ignored. Duplicates,
+  full-version-like names, the fixed tag, and `copy-release-notes-from` are rejected.
+- Names cannot conflict by path prefix, such as `v1` and `v1/stable`.
 
-When floating tags are requested, `tag` must have the stable form
-`vMAJOR.MINOR.PATCH`, without leading zeroes, prerelease suffixes or build
-metadata. Without floating tags, other valid fixed tag names remain supported.
-Aliases may use names such as `v1`, `v1.2`, `stable` or `channels/stable`.
+## Publication
 
-All tags are annotated tags targeting the same parentless distribution commit.
-Each annotation records the fixed version and source SHA. `sign-tag: 'true'`
-signs each tag independently with the configured key. The source checkout,
-local tags and branches remain unchanged, even when a local floating tag
-already exists. No distribution branch is pushed.
+Each alias is an annotated tag pointing to the same parentless commit as the
+fixed tag. `sign-tag: 'true'` signs every tag independently. The caller's local
+tags, branches and checkout are preserved; no distribution branch is pushed.
 
-For each existing remote alias, the action finds stable fixed version tags that
-point to the same commit. Both lightweight and annotated aliases are supported.
-The incoming version must not be older than any matching fixed version. If no
-matching fixed version can be found, publication fails rather than guessing.
-This prevents an older release job from moving a newer alias backward, even if
-it starts after the newer job has completed. Version components are compared as
-decimal numbers, without machine integer limits.
+All refs are pushed atomically:
 
-The fixed tag and all aliases are pushed in one atomic Git operation:
+- The fixed tag must still be absent; it is never reused or overwritten.
+- Each alias must still match the object observed before publication, or remain
+  absent if new. Concurrent changes reject the whole push.
+- Rejection of any ref, or lack of server atomic-push support, fails the entire
+  publication. There is no partial-push fallback. GitHub supports atomic pushes.
 
-- The fixed tag must still be absent. Existing fixed tags are never reused.
-- Each alias must still have the exact object observed before publication, or
-  remain absent if it is new. A concurrent change causes the whole push to fail.
-- A server-side rejection of any tag rejects the entire publication.
-- A server without atomic push support causes an error; there is no partial-push
-  fallback. GitHub supports atomic pushes.
+Repository rulesets must allow the selected alias updates. No tags are deleted,
+and unlisted aliases are unchanged. GitHub Releases are created for the fixed
+tag only, after the complete push succeeds.
 
-Repository rulesets must permit updates to the selected aliases while protecting
-fixed versions as appropriate. No tags are deleted, and unrelated aliases are
-never updated.
+## Existing aliases and migration
 
-## Releases and retries
+Before updating an alias, the action finds stable fixed version tags pointing to
+its current commit. The new version must not be older than any matching version.
+If none can be identified, publication fails. Both lightweight and annotated
+existing aliases are supported; new aliases are always annotated.
 
-`create-release: 'true'` creates a GitHub Release for the fixed tag only, after the
-complete tag push succeeds. Floating tags do not get separate Releases.
-If Release creation fails, the fixed tag and aliases stay published. Follow the
-[Release-only recovery procedure](reference.md#recover-a-failed-github-release-step);
-do not rerun this action or move tags back automatically.
+For example, an existing `v1` pointing to the same commit as `v1.2.2` can advance
+to `v1.2.3`, leaving the old fixed tag intact. An older release job cannot move
+it back. If the version mapping is missing, inspect and repair it in a separate,
+reviewed operation. There is no bypass for unknown versions or downgrades.
+An existing `latest` branch is neither required nor updated.
 
-If the Git push fails, inspect the remote refs before retrying, especially after
-a lost connection. A successful retry requires the fixed tag to be absent.
+## Retries
 
-## Migration
+After a failed or interrupted push, inspect the remote refs before retrying; the
+fixed tag must be absent for another run to succeed.
 
-To replace an existing `v1` alias, its current commit must also have a stable
-fixed version tag such as `v1.2.2`. Then publishing `v1.2.3` with `floating-tags: v1`
-can safely replace the alias. The old fixed version remains unchanged.
-
-If the alias has no identifiable fixed version, inspect its contents and history
-before migrating. Restore a legitimate version mapping or repair the alias in a
-separate, reviewed operation; this action provides no bypass for unknown targets
-or downgrades. An existing `latest` branch is neither required nor updated.
+If GitHub Release creation fails after the push, all tags stay published. Follow
+[Release-only recovery](reference.md#recover-a-failed-github-release-step)
+instead of rerunning this action or moving tags back.

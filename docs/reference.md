@@ -2,116 +2,97 @@
 
 ## Distribution contents and history
 
-Only `paths` are added to an empty tree, from the working tree at publication
-time. Relative layout is preserved, including edits to selected documentation.
-No filenames are included automatically. A selected directory includes all its
-contents, so select distribution directories rather than source directories.
+The action adds only `paths` from the working tree to an empty tree, preserving
+relative layout and selected edits. Each release gets a parentless commit with
+no source or previous release history. The source SHA is recorded in its commit
+message, tag annotation and `source` output.
 
-Each tag targets a new parentless root commit on a disposable orphan branch.
-`git log` at that tag contains one release commit, with no source or previous
-release history. The source SHA is recorded in the commit message, tag annotation
-and `source` output. The default identity is `github-actions[bot]`, with email
-`41898282+github-actions[bot]@users.noreply.github.com`.
-
-Only the fixed tag and explicitly selected floating tags are pushed. The
-caller's branch, HEAD, index, local tags and Git configuration are preserved.
-Existing local or remote fixed tags are rejected, even
-when they target the expected commit. An absent-ref lease prevents overwriting
-a concurrently created fixed tag. [Floating tag updates](floating-tags.md) use
-leases against their observed objects and share the fixed tag's atomic push.
-Use GitHub tag rulesets if other actors must also be prevented from moving or
-deleting tags.
+Only the fixed tag and explicitly selected floating tags are pushed. The caller's
+branch, HEAD, index, local tags and Git configuration are preserved. Existing
+local or remote fixed tags are rejected even if they target the expected commit;
+a failed remote lookup is an error. Use repository tag rulesets for protection
+against changes by other actors. See [floating tag update rules](floating-tags.md).
 
 ## Path rules
 
-Paths may name files or directories, including ignored paths and names containing
-spaces. Globs are not expanded: `dist/*` means a file literally named `*` within
-`dist`. Specify `dist` to include a directory recursively. Empty lines are ignored;
-at least one path must remain. Each path must exist. Absolute paths, `.` or `..`
-components, carriage returns, and `.git` components are rejected. Avoid selecting
-the entire repository; list the generated directories explicitly. Build symlinks
-are stored as Git symlinks, not dereferenced. Submodules and nested repositories
-are not artifact bundles; flatten their generated files before calling the action.
-Git attributes and clean filters apply when adding files, as with `git add`.
+Paths are newline-separated, literal file or directory names. Each must exist;
+empty lines are ignored and at least one path is required.
 
+- Directories are recursive, including ignored files. `dist/*` is not a glob:
+  use `dist` to select the directory.
+- Absolute paths, `.` or `..` components, carriage returns and `.git` components
+  are rejected. List distribution paths explicitly instead of the whole checkout.
+- Symlinks are stored as links, not dereferenced. Flatten build output from
+  submodules or nested repositories before selecting it.
+- Git attributes and clean filters apply, as with `git add`.
+
+Finish the build and avoid concurrent checkout changes while publishing.
 
 ## Permissions and authentication
 
-The publishing job needs `permissions: contents: write`. `origin` must point to
-the intended repository and Git must already have push authentication. With
-`actions/checkout`, use `persist-credentials: true` (the default). A shallow or
-detached checkout works; `fetch-depth: 0` is unnecessary.
+The publishing job needs `contents: write`. `origin` must point to the target
+repository with Git push authentication already configured. Checkout's
+`persist-credentials: true` provides this; shallow and detached checkouts work.
 
-If checkout uses `persist-credentials: false`, the caller must configure a supported
-Git credential mechanism before publication. Setting `GH_TOKEN` alone does not
-configure `git push`. The `token` input authenticates only the optional GitHub API calls and does not
-change Git credentials.
-For another repository, supply an appropriately scoped GitHub App token or PAT to
-checkout. Repository rulesets can still reject the push; configure the publishing
-identity's permissions accordingly. Never run a publishing job on untrusted code
-with write credentials.
+If credentials are not persisted, configure Git authentication yourself.
+`GH_TOKEN` and this action's `token` input do not authenticate `git push`.
+For another repository, supply a scoped GitHub App token or PAT to checkout,
+and set `release-repository` and `token` for its Release API calls. Repository
+rulesets can still reject the push. Do not publish untrusted code with write
+credentials.
 
-Release creation requires GitHub CLI (`gh`, preinstalled on GitHub-hosted Ubuntu)
-and a token with `contents: write` on `release-repository`. For a checkout of
-another repository, set both `release-repository` and `token` appropriately, in
-addition to checkout's Git credentials. Both source and distribution Releases are
-in that same repository. Tag-only mode does not call `gh` or require API access.
+Release operations require `gh` (preinstalled on GitHub-hosted Ubuntu) and an API
+token with `contents: write`. Source and distribution Releases must be in the
+same `release-repository`, matching `origin`. Tag-only mode does not call `gh`.
 
-Tag pushes authenticated by `GITHUB_TOKEN` generally do not trigger additional
-GitHub Actions workflows. Use the optional Release feature in this action, or use
-an appropriately scoped GitHub App token if downstream workflow triggers are needed.
+Pushes using `GITHUB_TOKEN` generally do not trigger other GitHub Actions
+workflows. Create the Release in this workflow, or use an appropriately scoped
+GitHub App token if downstream workflow triggers are needed.
 
 ## Release behavior
 
-Release creation produces a normal published Release titled with the distribution
-tag. Copying preserves only the source body, not its title, assets, draft status
-or prerelease status. Both Releases must be in `release-repository`, which must
-match the checkout's `origin`. Existing Releases are never edited.
+`create-release: 'true'` creates a normal published Release titled with the fixed
+tag. Choose either `copy-release-notes-from` or `generate-release-notes: 'true'`;
+both require Release creation, and invalid combinations fail before publication.
+With neither selected, notes are empty. Copying preserves only the source body,
+not assets, title, draft status or prerelease status. Existing Releases are not
+edited.
 
-`copy-release-notes-from` and `generate-release-notes: 'true'` are mutually
-exclusive and require `create-release: 'true'`. Invalid combinations fail before
-publication. With neither selected, the body is empty; generation is never
-implicit.
-
-The source body is fetched before the tag push; a failed read prevents
-publication. Release creation happens after the push, so a failure there leaves
-the fixed and floating tags intact. Success outputs are written only after all
-requested operations succeed. If a connection is lost, inspect the remote tag and Release before
-retrying. Locally created objects can remain unreachable after failure, but no
-release ref is left in the caller's repository. Finish builds and avoid concurrent
-checkout modifications before calling the action.
+Source notes are fetched before the push; a failed read prevents publication.
+Release creation happens afterward, so its failure leaves all tags published.
+Success outputs are written only after all requested operations complete.
+Locally created objects can remain unreachable after failure, but no release
+ref is left in the caller's repository.
 
 ## Recover a failed GitHub Release step
 
-If the tag push succeeds but GitHub Release creation fails, **do not rerun this
-action or the entire publishing job**. The existing tag will correctly cause an
-error. Verify the remote tag and retry only GitHub Release creation from an
-authenticated checkout or a separate manually dispatched recovery job.
+**Do not rerun this action or the publishing job after a successful tag push.**
+The fixed tag already exists and will be rejected. Retry only Release creation
+from an authenticated checkout or a separate recovery job, using an API token
+with `contents: write`.
 
-If copying was enabled, copy the source Release notes again and create only the
-distribution Release,
-using the actual repository, source tag and distribution tag. Authenticate `gh`
-with a token that has `contents: write`:
+If the API outcome was uncertain, first run
+`gh release view v1.2.3 --repo OWNER/REPO`. If the Release exists, inspect it
+rather than recreating it. After an uncertain push, also inspect the remote tags.
+Never move published tags back automatically.
+
+Use the same notes mode as the original attempt:
+
+Copy the source body:
 
 ```bash
 gh release view source-v1.2.3 --repo OWNER/REPO --json body --jq '.body' > release-notes.md
 gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes-file release-notes.md
 ```
 
-For generated notes:
+Generate notes:
 
 ```bash
 gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --generate-notes
 ```
 
-If no note source was specified, retry with explicitly empty notes:
+Leave notes empty:
 
 ```bash
 gh release create v1.2.3 --repo OWNER/REPO --verify-tag --title v1.2.3 --notes ''
 ```
-
-When copying was enabled, use `--notes-file` to preserve the source body.
-First check `gh release view v1.2.3` if the API outcome was uncertain. If a Release
-already exists, inspect it rather than recreating or moving the tag. A source
-release created by release-please is separate from the distribution release.
-
