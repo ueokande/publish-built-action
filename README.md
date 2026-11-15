@@ -95,13 +95,19 @@ See [floating tag examples and rules](docs/floating-tags.md) and [path rules](do
 | Input | Default | Description |
 | --- | --- | --- |
 | `create-release` | `false` | Create a GitHub Release after pushing the tags. |
+| `release-label` | Empty | `none`, `prerelease` or `latest`. Empty preserves GitHub's automatic default. |
 | `copy-release-notes-from` | Empty | Copy the body from this source Release tag; must differ from `tag`. |
 | `generate-release-notes` | `false` | Generate notes using GitHub. |
 | `release-repository` | `${{ github.repository }}` | Repository for Releases; must match `origin`. |
 | `token` | `${{ github.token }}` | API token for Release operations; does not authenticate Git. |
 
 Note options require `create-release: 'true'` and are mutually exclusive. With
-neither selected, notes are empty. Boolean inputs accept only `true` or `false`.
+neither selected, notes are empty. A specified `release-label` also requires
+Release creation. Boolean inputs accept only `true` or `false`.
+
+Marketplace publication and its primary/secondary categories must be set in
+GitHub's web interface; the public Release API does not expose these settings.
+See [Release labels and Marketplace settings](docs/reference.md#release-labels-and-marketplace-settings).
 
 **If Release creation fails after the push, retry only Release creation.** Do
 not rerun this action or the publishing job: the fixed tag already exists.

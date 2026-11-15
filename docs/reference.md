@@ -51,7 +51,7 @@ GitHub App token if downstream workflow triggers are needed.
 
 ## Release behavior
 
-`create-release: 'true'` creates a normal published Release titled with the fixed
+`create-release: 'true'` creates a published Release titled with the fixed
 tag. Choose either `copy-release-notes-from` or `generate-release-notes: 'true'`;
 both require Release creation, and invalid combinations fail before publication.
 With neither selected, notes are empty. Copying preserves only the source body,
@@ -64,6 +64,37 @@ Success outputs are written only after all requested operations complete.
 Locally created objects can remain unreachable after failure, but no release
 ref is left in the caller's repository.
 
+## Release labels and Marketplace settings
+
+Use `release-label` with `create-release: 'true'`:
+
+| Value | Release state | GitHub CLI flags |
+| --- | --- | --- |
+| `none` | Normal release, not marked Latest. | `--latest=false` |
+| `prerelease` | Pre-release, not Latest. | `--prerelease --latest=false` |
+| `latest` | Normal release marked Latest. | `--latest` |
+| Empty (default) | Preserve GitHub's automatic latest selection. | No label flags. |
+
+Labels control Release metadata only; tag and floating-tag rules remain
+unchanged. The label is not inferred from the tag or copied from source notes.
+
+The **Publish this Action to the GitHub Marketplace**, **Primary Category** and
+**Another Category** fields are web-interface settings. The public
+[Create Release API](https://docs.github.com/en/rest/releases/releases#create-a-release)
+and `gh release create` do not expose them. This action therefore has no inputs
+that claim to set those fields.
+
+To configure them after this action creates a Release:
+
+1. Open the Release using its `release-url` output, then choose **Edit**.
+2. Select **Publish this Action to the GitHub Marketplace**.
+3. Select **Primary Category** and, optionally, **Another Category**, then save.
+
+The repository and account must meet GitHub's
+[Marketplace publication requirements](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace),
+including acceptance of the Marketplace Developer Agreement. Do not rerun this
+action just to change Marketplace settings.
+
 ## Recover a failed GitHub Release step
 
 **Do not rerun this action or the publishing job after a successful tag push.**
@@ -75,6 +106,10 @@ If the API outcome was uncertain, first run
 `gh release view v1.2.3 --repo OWNER/REPO`. If the Release exists, inspect it
 rather than recreating it. After an uncertain push, also inspect the remote tags.
 Never move published tags back automatically.
+
+Preserve the original label too: add `--latest=false` for `none`,
+`--prerelease --latest=false` for `prerelease`, or `--latest` for `latest` to the
+commands below. Omit those flags if `release-label` was empty.
 
 Use the same notes mode as the original attempt:
 
