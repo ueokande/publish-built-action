@@ -49,6 +49,7 @@ fixture() {
   export PUBLISH_GENERATE_RELEASE_NOTES=false
   unset PUBLISH_SIGNING_KEY PUBLISH_AUTHOR_NAME PUBLISH_AUTHOR_EMAIL PUBLISH_GPG_PRIVATE_KEY PUBLISH_GPG_PASSPHRASE
   export PUBLISH_SIGN_COMMIT=false PUBLISH_SIGN_TAG=false
+  unset PUBLISH_RELEASE_LABEL
   export PUBLISH_CREATE_RELEASE=false
   export MOCK_MODE=disabled MOCK_ROOT="$root"
   mkdir "$root/bin"
@@ -65,6 +66,24 @@ case "$1 $2" in
     cat "$MOCK_ROOT/notes"
     ;;
   'release create')
+    label_count=0
+    case "${PUBLISH_RELEASE_LABEL:-}" in
+      none)
+        [[ ${*: -3:1} == --latest=false ]]
+        label_count=1
+        ;;
+      prerelease)
+        [[ ${*: -4:2} == '--prerelease --latest=false' ]]
+        label_count=2
+        ;;
+      latest)
+        [[ ${*: -3:1} == --latest ]]
+        label_count=1
+        ;;
+    esac
+    if (( label_count > 0 )); then
+      set -- "${@:1:$(( $# - label_count - 2 ))}" -- "${@: -1}"
+    fi
     if [[ -n ${PUBLISH_COPY_RELEASE_NOTES_FROM:-} ]]; then
       [[ $* == 'release create --repo owner/project --verify-tag --title v1.2.3 --notes-file '*' -- v1.2.3' ]]
       cmp -- "$MOCK_ROOT/notes" "${9}"
@@ -887,5 +906,46 @@ reject
 remote show-ref --verify --quiet refs/tags/v1.2.3 || fail 'Published signed tag was removed'
 [[ -z $(find "$root" -maxdepth 1 -name 'publish-built-action.*' -print) ]] || fail 'Release failure leaked imported keys'
 pass 'Release creation failure cleans imported keys while retaining the published tag'
+
+for label in none prerelease latest; do
+  release_fixture
+  export PUBLISH_RELEASE_LABEL="$label"
+  publish
+  eq "$(wc -l < "$root/gh-calls" | tr -d ' ')" 2
+  pass "Release label maps to the expected GitHub CLI flags: $label"
+done
+
+release_fixture
+unset PUBLISH_COPY_RELEASE_NOTES_FROM
+export PUBLISH_RELEASE_LABEL=none
+publish
+pass 'empty notes and an unlabeled normal Release can be selected together'
+
+release_fixture
+unset PUBLISH_COPY_RELEASE_NOTES_FROM
+export PUBLISH_GENERATE_RELEASE_NOTES=true PUBLISH_RELEASE_LABEL=latest
+publish
+pass 'generated notes and Latest label can be selected together'
+
+release_fixture
+export PUBLISH_RELEASE_LABEL=unknown
+reject
+absent
+[[ ! -e $root/gh-calls ]] || fail 'Invalid label called GitHub CLI'
+pass 'invalid Release label fails before publication or source lookup'
+
+fixture
+export PUBLISH_RELEASE_LABEL=latest
+reject
+absent
+pass 'Release labels require explicit Release creation'
+
+release_fixture
+export PUBLISH_RELEASE_LABEL=prerelease
+MOCK_MODE=create-failure
+reject
+remote show-ref --verify --quiet refs/tags/v1.2.3 || fail 'Published tag was removed'
+[[ $(cat "$root/log") == *'Retry only Release creation'* ]] || fail 'Missing labeled Release recovery guidance'
+pass 'labeled Release creation failure preserves the tag for Release-only recovery'
 
 printf 'Passed %s integration scenarios.\n' "$cases"

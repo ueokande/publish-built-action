@@ -127,6 +127,11 @@ validate_signing() {
 validate_release() {
   validate_boolean create-release "$create_release"
   validate_boolean generate-release-notes "$generate_notes"
+  case "$release_label" in
+    ''|none|prerelease|latest) ;;
+    *) fail 'release-label must be none, prerelease or latest.' ;;
+  esac
+  [[ -z $release_label || $create_release == true ]] || fail 'release-label requires create-release.'
   [[ -z $source_release || $generate_notes == false ]] || fail 'Choose only one of copy-release-notes-from and generate-release-notes.'
   if [[ -n $source_release || $generate_notes == true ]]; then
     [[ $create_release == true ]] || fail 'Release notes options require create-release.'
@@ -283,14 +288,19 @@ push_distribution_tags() {
 
 create_github_release() {
   if [[ $create_release == false ]]; then return 0; fi
-  local notes_args=(--notes '')
+  local notes_args=(--notes '') label_args=()
   if [[ -n $source_release ]]; then
     notes_args=(--notes-file "$temp_dir/release-notes.md")
   elif [[ $generate_notes == true ]]; then
     notes_args=(--generate-notes)
   fi
+  case "$release_label" in
+    none) label_args=(--latest=false) ;;
+    prerelease) label_args=(--prerelease --latest=false) ;;
+    latest) label_args=(--latest) ;;
+  esac
   if ! release_url=$(gh release create --repo "$release_repository" \
-    --verify-tag --title "$tag" "${notes_args[@]}" -- "$tag"); then
+    --verify-tag --title "$tag" "${notes_args[@]}" "${label_args[@]}" -- "$tag"); then
     fail "Tag $tag was pushed, but Release creation failed. Retry only Release creation; do not rerun this action."
   fi
 }
@@ -317,7 +327,7 @@ main() {
   local gpg_private_key=${PUBLISH_GPG_PRIVATE_KEY:-} gpg_passphrase=${PUBLISH_GPG_PASSPHRASE:-}
   local author_name=${PUBLISH_AUTHOR_NAME:-github-actions[bot]}
   local author_email=${PUBLISH_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}
-  local create_release=${PUBLISH_CREATE_RELEASE:-false}
+  local create_release=${PUBLISH_CREATE_RELEASE:-false} release_label=${PUBLISH_RELEASE_LABEL:-}
   local source_release=${PUBLISH_COPY_RELEASE_NOTES_FROM:-}
   local generate_notes=${PUBLISH_GENERATE_RELEASE_NOTES:-false}
   local release_repository=${PUBLISH_RELEASE_REPOSITORY:-}

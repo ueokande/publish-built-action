@@ -37,6 +37,9 @@ inputs:
   create-release:
     description: Create a GitHub Release after pushing the distribution tag. Must be true or false.
     default: 'false'
+  release-label:
+    description: Release label (none, prerelease, latest). Empty preserves GitHub's automatic default. Requires create-release when specified.
+    default: ''
   copy-release-notes-from:
     description: Copy this source Release body. Requires create-release; mutually exclusive with generate-release-notes.
     default: ''
@@ -81,6 +84,7 @@ runs:
         PUBLISH_AUTHOR_NAME: ${{ inputs.author-name }}
         PUBLISH_AUTHOR_EMAIL: ${{ inputs.author-email }}
         PUBLISH_CREATE_RELEASE: ${{ inputs.create-release }}
+        PUBLISH_RELEASE_LABEL: ${{ inputs.release-label }}
         PUBLISH_COPY_RELEASE_NOTES_FROM: ${{ inputs.copy-release-notes-from }}
         PUBLISH_GENERATE_RELEASE_NOTES: ${{ inputs.generate-release-notes }}
         PUBLISH_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
